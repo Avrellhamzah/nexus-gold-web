@@ -8,7 +8,7 @@ import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
 import LiveTicker from "../../components/LiveTicker";
 import CertificateGenerator from "../../components/CertificateGenerator";
-import { createPortal } from "react-dom"; // <-- TAMBAHAN IMPORT
+import { createPortal } from "react-dom";
 
 export default function AkunPage() {
   const { user, loading: authLoading } = useAuth();
@@ -28,7 +28,7 @@ export default function AkunPage() {
   const [certModal, setCertModal] = useState({ isOpen: false, invoice: null as any });
   const [animateTab, setAnimateTab] = useState(false);
 
-  // STATE KYC & UNBOXING
+  // --- STATE KYC & UNBOXING ---
   const [kycRecord, setKycRecord] = useState<any | null>(null);
   const [kycFullName, setKycFullName] = useState("");
   const [kycIdNumber, setKycIdNumber] = useState("");
@@ -40,16 +40,21 @@ export default function AkunPage() {
   const [unboxingFile, setUnboxingFile] = useState<File | null>(null);
   const [isUploadingProof, setIsUploadingProof] = useState(false);
 
+  // --- STATE PEMBAYARAN MANUAL (BUKTI TRANSFER) ---
+  const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<any | null>(null);
+  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
+  const [isUploadingPayment, setIsUploadingPayment] = useState(false);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+
   useEffect(() => {
     setAnimateTab(true);
     const timer = setTimeout(() => setAnimateTab(false), 500);
     return () => clearTimeout(timer);
   }, [activeTab]);
 
-  // --- FUNGSI SCROLL LOCK YANG LEBIH KUAT ---
+  // --- FUNGSI SCROLL LOCK YANG LEBIH KUAT (TERMASUK MODAL PEMBAYARAN) ---
   useEffect(() => {
-    if (certModal.isOpen || selectedInvoiceForUnboxing) {
-      // Mengunci scroll di html dan body
+    if (certModal.isOpen || selectedInvoiceForUnboxing || selectedInvoiceForPayment) {
       document.documentElement.style.overflow = "hidden";
       document.body.style.overflow = "hidden";
     } else {
@@ -61,7 +66,7 @@ export default function AkunPage() {
       document.documentElement.style.overflow = "unset";
       document.body.style.overflow = "unset";
     };
-  }, [certModal.isOpen, selectedInvoiceForUnboxing]);
+  }, [certModal.isOpen, selectedInvoiceForUnboxing, selectedInvoiceForPayment]);
 
   useEffect(() => {
     const fetchAnalysis = async () => {
@@ -83,6 +88,9 @@ export default function AkunPage() {
 
       const { data: prodData } = await supabase.from("products").select("id, weight_grams");
       if (prodData) setProductDb(prodData);
+
+      const { data: bankData } = await supabase.from("bank_accounts").select("*").eq("is_active", true);
+      if (bankData) setBankAccounts(bankData);
     } catch (err) { console.error(err); } finally { setIsLoading(false); }
   };
 
@@ -94,6 +102,25 @@ export default function AkunPage() {
 
   useEffect(() => { if (mounted && !authLoading && !user) router.push("/masuk"); }, [user, authLoading, mounted, router]);
   useEffect(() => { if (user) fetchMyData(); }, [user]);
+
+  // --- FUNGSI TEMA BANK DINAMIS ---
+  const getBankStyle = (bankName: string) => {
+    const name = bankName.toLowerCase();
+    if (name.includes('bca')) {
+      return { border: 'group-hover:border-blue-500/50', bgIcon: 'bg-blue-500/10', textIcon: 'text-blue-500', badge: 'bg-blue-900/30 text-blue-400 border-blue-900/50', logoText: 'BCA' };
+    }
+    if (name.includes('mandiri')) {
+      return { border: 'group-hover:border-yellow-500/50', bgIcon: 'bg-yellow-500/10', textIcon: 'text-yellow-500', badge: 'bg-yellow-900/30 text-yellow-500 border-yellow-900/50', logoText: 'MANDIRI' };
+    }
+    if (name.includes('bni')) {
+      return { border: 'group-hover:border-orange-500/50', bgIcon: 'bg-orange-500/10', textIcon: 'text-orange-500', badge: 'bg-orange-900/30 text-orange-400 border-orange-900/50', logoText: 'BNI' };
+    }
+    if (name.includes('bri')) {
+      return { border: 'group-hover:border-blue-400/50', bgIcon: 'bg-blue-400/10', textIcon: 'text-blue-400', badge: 'bg-blue-900/30 text-blue-400 border-blue-900/50', logoText: 'BRI' };
+    }
+    // Default Style (Nexus Gold)
+    return { border: 'group-hover:border-[#C5A059]/50', bgIcon: 'bg-[#C5A059]/10', textIcon: 'text-[#C5A059]', badge: 'bg-[#C5A059]/10 text-[#C5A059] border-[#C5A059]/20', logoText: 'BANK' };
+  };
 
   const { portfolio, totalInvested, totalGrams, currentLiquidationValue, unrealizedProfit, roiPercentage } = useMemo(() => {
     let invested = 0; let grams = 0; const ownedAssetsMap = new Map();
@@ -130,10 +157,56 @@ export default function AkunPage() {
   const toggleTheme = () => { const newTheme = !isDark; setIsDark(newTheme); localStorage.setItem("nexus-theme", newTheme ? "dark" : "light"); };
   const handleLogout = async () => { await supabase.auth.signOut(); router.push("/"); };
   
+  // --- FUNGSI UNGGAH BUKTI TRANSFER MANUAL ---
+  const handleUploadPaymentProof = async () => {
+    if (!selectedInvoiceForPayment || !paymentProofFile) return;
+
+    if (paymentProofFile.size > 5 * 1024 * 1024) {
+      alert("Ukuran file maksimal 5MB.");
+      return;
+    }
+
+    setIsUploadingPayment(true);
+    try {
+      const fileExt = paymentProofFile.name.split('.').pop();
+      const fileName = `${user?.id}_${selectedInvoiceForPayment.id}_${Date.now()}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage.from("payment_proofs").upload(fileName, paymentProofFile);
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage.from("payment_proofs").getPublicUrl(fileName);
+
+      const { error: updateError } = await supabase.from("invoices")
+        .update({ 
+          payment_proof_url: publicUrlData.publicUrl,
+          status: "PROSES VERIFIKASI"
+        })
+        .eq("id", selectedInvoiceForPayment.id);
+        
+      if (updateError) throw updateError;
+
+      // Update UI seketika tanpa harus refresh
+      setTransactions(transactions.map(inv => 
+        inv.id === selectedInvoiceForPayment.id 
+          ? { ...inv, status: 'PROSES VERIFIKASI', payment_proof_url: publicUrlData.publicUrl } 
+          : inv
+      ));
+      
+      setSelectedInvoiceForPayment(null);
+      setPaymentProofFile(null);
+      alert("Bukti transfer berhasil dikirim. Menunggu verifikasi Admin.");
+
+    } catch (err) {
+      console.error(err);
+      alert("Sistem gagal mengunggah dokumen. Pastikan koneksi stabil.");
+    } finally {
+      setIsUploadingPayment(false);
+    }
+  };
+
   const handleUploadUnboxing = async () => {
     if (!selectedInvoiceForUnboxing || !unboxingFile) return;
 
-    // Proteksi ukuran file (Maks 50MB)
     if (unboxingFile.size > 50 * 1024 * 1024) {
       alert("Ukuran file terlalu besar. Maksimal unggahan adalah 50MB.");
       return;
@@ -144,28 +217,16 @@ export default function AkunPage() {
       const fileExt = unboxingFile.name.split('.').pop();
       const fileName = `${selectedInvoiceForUnboxing.invoice_number}-unboxing-${Date.now()}.${fileExt}`;
       
-      // 1. Upload ke Storage
-      const { error: uploadError } = await supabase.storage
-        .from('delivery_proofs')
-        .upload(fileName, unboxingFile);
+      const { error: uploadError } = await supabase.storage.from('delivery_proofs').upload(fileName, unboxingFile);
       if (uploadError) throw uploadError;
 
-      // 2. Ambil URL Publik
-      const { data: publicUrlData } = supabase.storage
-        .from('delivery_proofs')
-        .getPublicUrl(fileName);
+      const { data: publicUrlData } = supabase.storage.from('delivery_proofs').getPublicUrl(fileName);
 
-      // 3. Update Status Transaksi
-      const { error: updateError } = await supabase
-        .from('invoices')
-        .update({ 
-          status: 'MENUNGGU TINJAUAN', 
-          unboxing_proof_url: publicUrlData.publicUrl 
-        })
+      const { error: updateError } = await supabase.from('invoices')
+        .update({ status: 'MENUNGGU TINJAUAN', unboxing_proof_url: publicUrlData.publicUrl })
         .eq('id', selectedInvoiceForUnboxing.id);
       if (updateError) throw updateError;
 
-      // 4. Update UI & Tutup Modal
       setTransactions(transactions.map(inv => 
         inv.id === selectedInvoiceForUnboxing.id 
           ? { ...inv, status: 'MENUNGGU TINJAUAN', unboxing_proof_url: publicUrlData.publicUrl } 
@@ -176,8 +237,8 @@ export default function AkunPage() {
       alert("Terima kasih. Bukti serah-terima telah diamankan di brankas digital.");
 
     } catch (err) {
-      console.error("Gagal mengunggah bukti:", err);
-      alert("Sistem gagal mengunggah bukti. Pastikan koneksi stabil.");
+      console.error(err);
+      alert("Sistem gagal mengunggah bukti.");
     } finally {
       setIsUploadingProof(false);
     }
@@ -245,10 +306,41 @@ export default function AkunPage() {
   const getStatusColor = (status: string) => {
     switch (status.toUpperCase()) {
       case "MENUNGGU PEMBAYARAN": return isDark ? "text-yellow-500 border-yellow-700/50 bg-yellow-900/10" : "text-yellow-700 border-yellow-300 bg-yellow-50";
-      case "LUNAS": return isDark ? "text-blue-400 border-blue-700/50 bg-blue-900/10" : "text-blue-700 border-blue-300 bg-blue-50";
+      case "PROSES VERIFIKASI": return isDark ? "text-blue-400 border-blue-700/50 bg-blue-900/10" : "text-blue-700 border-blue-300 bg-blue-50";
       case "DIKIRIM": return isDark ? "text-purple-400 border-purple-700/50 bg-purple-900/10" : "text-purple-700 border-purple-300 bg-purple-50";
+      case "LUNAS":
       case "SELESAI": return isDark ? "text-green-400 border-green-700/50 bg-green-900/10" : "text-green-700 border-green-300 bg-green-50";
+      case "BATAL": return isDark ? "text-red-400 border-red-700/50 bg-red-900/10" : "text-red-700 border-red-300 bg-red-50";
       default: return isDark ? "text-zinc-400 border-zinc-600 bg-zinc-800/20" : "text-zinc-600 border-zinc-300 bg-zinc-50";
+    }
+  };
+
+  // --- FUNGSI COPY TO CLIPBOARD (BULLETPROOF HYBRID) ---
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      // 1. Coba gunakan API Modern (Jika HTTPS / Aman)
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // 2. Fallback Klasik (Jika HTTP / Browser ketat)
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed"; // Mencegah layar bergeser
+        textArea.style.left = "-999999px";
+        textArea.style.top = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (!successful) throw new Error("Gagal menyalin");
+      }
+      showToast(`Nomor Rekening ${label} berhasil disalin!`, "success");
+    } catch (err) {
+      console.error("Copy error:", err);
+      showToast("Sistem peramban menolak. Silakan blok teks dan salin manual.", "error");
     }
   };
 
@@ -273,7 +365,6 @@ export default function AkunPage() {
       <div className="sticky top-0 z-[80] w-full"><Navbar isDark={isDark} toggleTheme={toggleTheme} /></div>
 
       <main className="max-w-6xl mx-auto px-6 py-12 md:py-16 min-h-[70vh]">
-        {/* ... KODE HEADER & ANALITIK ... */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-6 animate-tab-content">
           <div>
             <span className={`text-[10px] font-bold uppercase tracking-widest ${theme.textMuted}`}>Dasbor Kekayaan Pribadi</span>
@@ -287,7 +378,6 @@ export default function AkunPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-10 animate-tab-content" style={{ animationDelay: '0.1s' }}>
-          {/* Box Modal & Likuidasi */}
           <div className={`lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-6`}>
             <div className={`p-6 rounded-xl border shadow-sm ${theme.bgCard} ${theme.border} flex flex-col justify-between transition-all duration-300 hover:shadow-lg`}>
               <div className="flex justify-between items-start mb-4">
@@ -309,7 +399,6 @@ export default function AkunPage() {
               </div>
             </div>
           </div>
-          {/* Radar Market */}
           <div className={`lg:col-span-4 p-6 rounded-xl border shadow-sm ${theme.bgCard} ${theme.border} flex flex-col`}>
             <div className="flex justify-between items-center mb-4">
               <h3 className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 ${theme.textSecondary}`}><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Market Radar</h3>
@@ -328,7 +417,6 @@ export default function AkunPage() {
           </div>
         </div>
 
-        {/* TAB NAVIGASI */}
         <div className={`flex gap-8 border-b mb-8 overflow-x-auto custom-scrollbar ${theme.border} animate-tab-content`} style={{ animationDelay: '0.2s' }}>
           <button onClick={() => setActiveTab("portofolio")} className={`pb-4 whitespace-nowrap text-xs font-bold uppercase tracking-widest transition-colors border-b-2 ${activeTab === "portofolio" ? 'border-[#C5A059] text-[#C5A059]' : `border-transparent ${theme.textMuted} hover:${theme.textPrimary}`}`}>Aset Terverifikasi</button>
           <button onClick={() => setActiveTab("riwayat")} className={`pb-4 whitespace-nowrap text-xs font-bold uppercase tracking-widest transition-colors border-b-2 ${activeTab === "riwayat" ? 'border-[#C5A059] text-[#C5A059]' : `border-transparent ${theme.textMuted} hover:${theme.textPrimary}`}`}>Riwayat Transaksi</button>
@@ -337,7 +425,6 @@ export default function AkunPage() {
           </button>
         </div>
 
-        {/* AREA KONTEN TAB */}
         <div className={animateTab ? "opacity-0" : "animate-tab-content"}>
           {isLoading ? (
             <div className={`text-center py-20 text-xs uppercase tracking-widest animate-pulse ${theme.textMuted}`}>Menyinkronkan Data Brankas...</div>
@@ -386,7 +473,6 @@ export default function AkunPage() {
                           <div className="flex flex-col items-end gap-3">
                             <span className={`px-3 py-1.5 rounded text-[10px] font-bold border uppercase tracking-wider shadow-sm ${getStatusColor(inv.status)}`}>{inv.status}</span>
                             
-                            {/* TOMBOL PEMICU MODAL E-CERTIFICATE */}
                             {inv.status === "SELESAI" && (
                               <button onClick={() => setCertModal({ isOpen: true, invoice: inv })} className="text-[#C5A059] hover:text-white text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center gap-1.5 border border-[#C5A059]/50 hover:bg-[#C5A059]/10 px-3 py-1.5 rounded">
                                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Lihat Sertifikat
@@ -407,6 +493,27 @@ export default function AkunPage() {
                           ))}
                         </div>
 
+                        {/* --- AREA TOMBOL AKSI BERDASARKAN STATUS --- */}
+
+                        {/* Aksi 1: Pembayaran Manual */}
+                        {inv.status === "MENUNGGU PEMBAYARAN" && (
+                          <div className={`px-6 py-4 border-t flex justify-end ${theme.border} ${theme.bgCard}`}>
+                            <button onClick={() => setSelectedInvoiceForPayment(inv)} className="bg-gradient-to-r from-[#C5A059] to-[#B38F4B] text-[#0F110F] text-xs font-bold uppercase tracking-widest px-6 py-3 rounded shadow-md hover:shadow-lg transition-all">
+                              Konfirmasi Pembayaran
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Notifikasi: Proses Verifikasi */}
+                        {inv.status === "PROSES VERIFIKASI" && (
+                          <div className={`px-6 py-4 border-t flex justify-center md:justify-end ${theme.border} ${theme.bgCard}`}>
+                            <div className="bg-blue-900/10 border border-blue-900/30 text-blue-400 px-6 py-3 rounded text-center">
+                              <p className="text-[10px] uppercase tracking-widest font-bold">Bukti Sedang Ditinjau Tim Verifikasi</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Logistik Note (Jika Ada) */}
                         {inv.proof_of_delivery_url && inv.status !== "SELESAI" && (
                           <div className={`px-6 py-4 border-t ${theme.border} bg-blue-900/10`}>
                             <p className="text-[10px] uppercase tracking-widest text-blue-500 font-bold mb-2">Pemberitahuan Logistik Nexus</p>
@@ -414,9 +521,13 @@ export default function AkunPage() {
                             <a href={inv.proof_of_delivery_url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-500 hover:underline">Lihat Foto Bukti Pengantaran →</a>
                           </div>
                         )}
+
+                        {/* Aksi 2: Konfirmasi Penerimaan (Unboxing) */}
                         {(inv.status === "DIKIRIM" || inv.status === "TIBA DI TUJUAN") && (
                           <div className={`px-6 py-4 border-t flex justify-end ${theme.border} ${theme.bgCard}`}>
-                            <button onClick={() => setSelectedInvoiceForUnboxing(inv)} className="bg-gradient-to-r from-[#C5A059] to-[#B38F4B] text-[#0F110F] text-xs font-bold uppercase tracking-widest px-6 py-3 rounded shadow-md hover:shadow-lg transition-all">Konfirmasi Penerimaan Aset</button>
+                            <button onClick={() => setSelectedInvoiceForUnboxing(inv)} className="bg-gradient-to-r from-[#C5A059] to-[#B38F4B] text-[#0F110F] text-xs font-bold uppercase tracking-widest px-6 py-3 rounded shadow-md hover:shadow-lg transition-all">
+                              Konfirmasi Penerimaan Aset
+                            </button>
                           </div>
                         )}
                       </div>
@@ -425,7 +536,7 @@ export default function AkunPage() {
                 )
               )}
 
-              {/* TAB 3: KYC */}
+              {/* TAB KYC */}
               {activeTab === "kyc" && (
                 <div className={`border rounded-xl shadow-sm p-6 md:p-10 ${theme.bgCard} ${theme.border}`}>
                   {kycRecord?.status === 'VERIFIED' ? (
@@ -479,42 +590,24 @@ export default function AkunPage() {
         </div>
       </main>
       
- {mounted && createPortal(
+      {/* ===================================================================== */}
+      {/* PORTAL PELINDUNG MODAL (TETAP MENUTUP DOKUMEN HTML UTAMA SAAT AKTIF) */}
+      {/* ===================================================================== */}
+      {mounted && createPortal(
         <>
           {/* 1. CEREMONY MODAL: E-CERTIFICATE PREVIEW */}
           <div className={`fixed inset-0 z-[9999] flex items-center justify-center transition-all duration-500 ${certModal.isOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`}>
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setCertModal({ isOpen: false, invoice: null })}></div>
-            
             <div className={`relative bg-[#121412] border border-[#C5A059]/30 w-full max-w-md rounded-2xl shadow-[0_0_50px_rgba(197,160,89,0.15)] p-8 text-center overflow-hidden transform transition-all duration-500 ease-out ${certModal.isOpen ? 'scale-100 translate-y-0' : 'scale-95 translate-y-8'}`}>
               <div className="absolute -top-20 -right-20 w-48 h-48 bg-[#C5A059] blur-[100px] opacity-20 pointer-events-none"></div>
-
               <div className="w-16 h-16 bg-gradient-to-br from-[#C5A059] to-[#8C6D31] rounded-full mx-auto flex items-center justify-center mb-6 shadow-[0_0_20px_rgba(197,160,89,0.4)] relative z-10">
                 <svg className="w-8 h-8 text-[#0F110F]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
               </div>
-
               <h3 className="font-[family-name:var(--font-playfair)] text-2xl font-bold text-[#C5A059] mb-2 relative z-10">Certificate of Authenticity</h3>
               <p className="text-xs text-zinc-400 mb-8 relative z-10 leading-relaxed">
                 Dokumen legal kepemilikan aset fisik siap diunduh.<br/>
                 Referensi: <span className="font-mono text-zinc-200">{certModal.invoice?.invoice_number}</span>
               </p>
-
-              <div className="bg-[#0F110F] border border-[#2E3730] rounded-xl p-5 mb-8 text-left relative z-10 shadow-inner">
-                <div className="flex justify-between items-end border-b border-[#2E3730] pb-3 mb-3">
-                  <div>
-                    <p className="text-[9px] uppercase tracking-widest text-zinc-500 mb-1">Pemilik Sah</p>
-                    <p className="font-bold text-zinc-200">{user.user_metadata?.full_name || "Klien Premium"}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[9px] uppercase tracking-widest text-zinc-500 mb-1">Tanggal Hak Milik</p>
-                    <p className="text-xs font-mono text-zinc-300">{certModal.invoice ? new Date(certModal.invoice.created_at).toLocaleDateString('id-ID') : '-'}</p>
-                  </div>
-                </div>
-                <div>
-                  <p className="text-[9px] uppercase tracking-widest text-zinc-500 mb-1">Kuantitas Komoditas</p>
-                  <p className="font-mono text-[#C5A059] font-bold">{certModal.invoice?.invoice_items?.length} Macam Aset Emas</p>
-                </div>
-              </div>
-
               <div className="flex flex-col gap-3 relative z-10">
                 {certModal.invoice && (
                   <div onClick={() => setTimeout(() => setCertModal({isOpen: false, invoice: null}), 3000)}>
@@ -529,9 +622,7 @@ export default function AkunPage() {
           {/* 2. MODAL UNBOXING ASET */}
           <div className={`fixed inset-0 z-[9999] flex items-center justify-center transition-all duration-300 ${selectedInvoiceForUnboxing ? 'opacity-100 visible' : 'opacity-0 invisible'}`}>
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !isUploadingProof && setSelectedInvoiceForUnboxing(null)}></div>
-            
             <div className={`relative bg-[#121412] border border-[#C5A059]/30 w-full max-w-md rounded-2xl shadow-[0_0_40px_rgba(197,160,89,0.1)] p-8 overflow-hidden transform transition-all duration-300 ease-out ${selectedInvoiceForUnboxing ? 'scale-100 translate-y-0' : 'scale-95 translate-y-8'}`}>
-              
               <h3 className="font-[family-name:var(--font-playfair)] text-2xl font-bold text-[#C5A059] mb-2">Otorisasi Serah-Terima</h3>
               <p className="text-xs text-zinc-400 mb-6 leading-relaxed">Untuk alasan asuransi & keamanan, mohon unggah video unboxing paket (tidak terpotong) sebagai bukti bahwa aset tiba dengan kondisi utuh.</p>
               
@@ -551,12 +642,126 @@ export default function AkunPage() {
                   )}
                 </label>
               </div>
-
               <div className="flex justify-end gap-3">
                 <button disabled={isUploadingProof} onClick={() => setSelectedInvoiceForUnboxing(null)} className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:text-white px-4 py-3 transition-colors">Batal</button>
-                <button disabled={!unboxingFile || isUploadingProof} onClick={handleUploadUnboxing} className="bg-gradient-to-r from-[#C5A059] to-[#B38F4B] text-[#0F110F] font-bold text-[10px] uppercase tracking-widest px-6 py-3 rounded shadow-md hover:shadow-lg disabled:opacity-50 transition-all flex items-center gap-2">
-                  {isUploadingProof && <svg className="w-3 h-3 animate-spin text-[#0F110F]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+                <button disabled={!unboxingFile || isUploadingProof} onClick={handleUploadUnboxing} className="bg-gradient-to-r from-[#C5A059] to-[#B38F4B] text-[#0F110F] font-bold text-[10px] uppercase tracking-widest px-6 py-3 rounded shadow-md hover:shadow-lg disabled:opacity-50 transition-all">
                   {isUploadingProof ? "Mengenkripsi..." : "Kirim & Selesaikan"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+            {/* 3. MODAL TERINTEGRASI: INFO BANK & UNGGAH BUKTI */}
+          <div className={`fixed inset-0 z-[9999] flex items-center justify-center transition-all duration-300 ${selectedInvoiceForPayment ? 'opacity-100 visible' : 'opacity-0 invisible'}`}>
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !isUploadingPayment && setSelectedInvoiceForPayment(null)}></div>
+            <div className={`relative bg-[#121412] border border-[#C5A059]/30 w-full max-w-3xl rounded-2xl shadow-[0_0_40px_rgba(197,160,89,0.1)] overflow-hidden transform transition-all duration-300 ease-out flex flex-col max-h-[90vh] ${selectedInvoiceForPayment ? 'scale-100 translate-y-0' : 'scale-95 translate-y-8'}`}>
+              
+              <div className="bg-[#161B18] px-8 py-5 border-b border-[#2E3730] flex justify-between items-center shrink-0">
+                <h3 className="text-sm font-bold text-[#C5A059] uppercase tracking-widest">Penyelesaian Akuisisi Fisik</h3>
+                <button onClick={() => !isUploadingPayment && setSelectedInvoiceForPayment(null)} className="text-zinc-500 hover:text-white text-xl">✕</button>
+              </div>
+              
+              {/* Area Scrollable */}
+              <div className="p-8 overflow-y-auto custom-scrollbar space-y-8">
+                
+                {/* Info Tagihan */}
+                <div className="flex flex-col md:flex-row justify-between items-center gap-6 bg-[#1C221E] border border-[#2E3730] p-6 rounded-xl shadow-inner">
+                  <div>
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1">Referensi Tagihan</p>
+                    <p className="text-lg font-mono text-zinc-200">{selectedInvoiceForPayment?.invoice_number}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1">Nominal Transfer Mutlak</p>
+                    <p className="text-2xl font-black font-mono text-[#C5A059]">Rp {selectedInvoiceForPayment && new Intl.NumberFormat('id-ID').format(selectedInvoiceForPayment.total_amount)}</p>
+                  </div>
+                </div>
+
+                {/* Info Rekening Bank Dinamis */}
+                <div>
+                  <p className="text-[10px] text-[#C5A059] uppercase tracking-widest font-bold mb-4">Pilihan Rekening Korporasi Kami</p>
+                    <div className="grid grid-cols-1 gap-4">
+                    {bankAccounts.map((bank) => {
+                      const style = getBankStyle(bank.bank_name);
+                        function showToast(arg0: string, arg1: string) {
+                            throw new Error("Function not implemented.");
+                        }
+
+                      return (
+                        <div key={bank.id} className={`bg-[#161B18] border border-[#2E3730] rounded-xl p-5 relative group transition-all duration-300 ${style.border} hover:shadow-lg`}>
+                          
+                          <div className="flex justify-between items-start mb-6">
+                            <div className="flex items-center gap-4">
+                              {/* Logo Bank Buatan */}
+                              <div className={`w-12 h-12 rounded-lg flex items-center justify-center font-black italic text-xs ${style.bgIcon} ${style.textIcon} border border-white/5`}>
+                                {style.logoText}
+                              </div>
+                              <div>
+                                <span className="text-sm font-bold text-zinc-100 block mb-1">{bank.bank_name}</span>
+                                <span className={`text-[9px] font-bold px-2 py-0.5 border rounded ${style.badge}`}>
+                                  {bank.currency || 'IDR'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                            <div>
+                              <p className="text-2xl font-mono text-zinc-300 tracking-wider mb-1 group-hover:text-white transition-colors">{bank.account_number}</p>
+                              <p className="text-[10px] text-zinc-500 uppercase tracking-wider">A.N {bank.account_name}</p>
+                            </div>
+
+                            {/* Tombol Salin Interaktif */}
+                        <button 
+                          onClick={(e) => {
+                            e.preventDefault();
+                            // Gunakan fungsi kebal yang baru saja kita buat
+                            copyToClipboard(bank.account_number, style.logoText);
+                          }} 
+                          className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all w-full md:w-auto
+                            bg-[#1C221E] border border-[#2E3730] text-zinc-400
+                            group-hover:${style.bgIcon} group-hover:${style.textIcon} group-hover:border-transparent`}
+                        >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                              Salin Rekening
+                            </button>
+                          </div>
+                          
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[9px] text-yellow-600 mt-3">*Pastikan nominal transfer sesuai hingga digit terakhir untuk mempercepat validasi otomatis.</p>
+                </div>
+
+                {/* Form Upload Bukti */}
+                <div className="border-t border-[#2E3730] pt-8">
+                  <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold mb-4 text-center">Konfirmasi Transaksi Selesai</p>
+                  <label className={`block border-2 border-dashed ${paymentProofFile ? 'border-[#C5A059] bg-[#C5A059]/5' : 'border-[#2E3730] bg-[#0F110F]'} rounded-xl p-8 text-center hover:border-[#C5A059] cursor-pointer transition-colors max-w-md mx-auto`}>
+                    <input type="file" accept="image/jpeg,image/png,image/jpg" className="hidden" onChange={(e) => setPaymentProofFile(e.target.files?.[0] || null)} />
+                    {paymentProofFile ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <svg className="w-8 h-8 text-[#C5A059]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        <span className="text-sm font-bold text-[#C5A059] truncate max-w-full px-4">{paymentProofFile.name}</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2">
+                        <svg className="w-8 h-8 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Pilih Struk / Bukti Transfer (JPG/PNG)</span>
+                      </div>
+                    )}
+                  </label>
+                </div>
+                
+              </div>
+
+              {/* Action Buttons */}
+              <div className="bg-[#161B18] px-8 py-5 border-t border-[#2E3730] flex justify-end gap-4 shrink-0">
+                <button disabled={isUploadingPayment} onClick={() => setSelectedInvoiceForPayment(null)} className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:text-white px-4 py-3 transition-colors">Batal</button>
+                <button disabled={!paymentProofFile || isUploadingPayment} onClick={handleUploadPaymentProof} className="bg-gradient-to-r from-[#C5A059] to-[#B38F4B] text-[#0F110F] font-bold text-[10px] uppercase tracking-widest px-8 py-3 rounded shadow-md hover:shadow-lg disabled:opacity-50 transition-all flex items-center gap-2">
+                  {isUploadingPayment && <svg className="w-3 h-3 animate-spin text-[#0F110F]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+                  {isUploadingPayment ? "Mengunggah..." : "Kirim Bukti Validasi"}
                 </button>
               </div>
             </div>
@@ -568,4 +773,8 @@ export default function AkunPage() {
       <Footer isDark={isDark} />
     </div>
   );
+}
+
+function showToast(arg0: string, arg1: string) {
+    throw new Error("Function not implemented.");
 }

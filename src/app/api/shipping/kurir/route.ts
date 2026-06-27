@@ -35,27 +35,52 @@ export async function POST(req: Request) {
       }))
     };
 
-    // 4. Eksekusi ke Satelit BiteShip
-    const response = await fetch("https://api.biteship.com/v1/rates/couriers", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${BITESHIP_API_KEY}`,
-        "Content-Type": "application/json"
+
+    // --- MODE PURWARUPA (MOCK DATA) UNTUK MENGHINDARI BIAYA API ---
+    // Hapus atau jadikan komentar (//) saat Anda sudah melakukan Top-Up di BiteShip
+    
+    // Simulasi delay jaringan (1 detik)
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Data tiruan yang menyerupai balasan asli BiteShip
+    const mockPricing = [
+      {
+        company: "paxel",
+        type: "same_day",
+        duration: "1 Hari",
+        price: 35000 + (payload.items.length * 5000) // Harga dinamis buatan
       },
-      body: JSON.stringify(payload)
-    });
+      {
+        company: "tiki",
+        type: "ons",
+        duration: "1-2 Hari",
+        price: 28000 + (payload.items.length * 2000)
+      }
+    ];
 
-    const data = await response.json();
+    return NextResponse.json({ success: true, rates: mockPricing });
 
-    if (!response.ok) {
-      console.error("BiteShip Reject Payload:", JSON.stringify(payload, null, 2));
-      console.error("BiteShip Error Message:", data);
+    // // 4. Eksekusi ke Satelit BiteShip
+    // const response = await fetch("https://api.biteship.com/v1/rates/couriers", {
+    //   method: "POST",
+    //   headers: {
+    //     "Authorization": `Bearer ${BITESHIP_API_KEY}`,
+    //     "Content-Type": "application/json"
+    //   },
+    //   body: JSON.stringify(payload)
+    // });
+
+    // const data = await response.json();
+
+    // if (!response.ok) {
+    //   console.error("BiteShip Reject Payload:", JSON.stringify(payload, null, 2));
+    //   console.error("BiteShip Error Message:", data);
       
-      const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
-      throw new Error(errorMsg || "Gagal menghubungi satelit logistik BiteShip.");
-    }
+    //   const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+    //   throw new Error(errorMsg || "Gagal menghubungi satelit logistik BiteShip.");
+    // }
 
-    return NextResponse.json({ success: true, rates: data.pricing });
+    // return NextResponse.json({ success: true, rates: data.pricing });
 
   } catch (error: any) {
     console.error("Shipping API Error:", error.message);
