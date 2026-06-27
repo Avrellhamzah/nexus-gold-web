@@ -4,46 +4,42 @@ export async function POST(req: Request) {
   try {
     const { destination_postal_code, items } = await req.json();
     
-    // Tarik kredensial dari environment
-    const BITESHIP_API_KEY = process.env.BITESHIP_API_KEY;
+    // 1. Tarik dan bersihkan kredensial dari environment
+    const rawApiKey = process.env.BITESHIP_API_KEY || "";
+    const BITESHIP_API_KEY = rawApiKey.replace(/['"]/g, '').trim();
     const RAW_ORIGIN_POSTAL = process.env.BITESHIP_ORIGIN_POSTAL_CODE;
 
     if (!BITESHIP_API_KEY) {
       throw new Error("Sistem logistik belum dikonfigurasi (API Key hilang).");
     }
 
-    // --- PROTEKSI MUTLAK: PEMBERSIH KARAKTER (SANITIZER) ---
-    // Menghapus spasi, enter (\r\n), atau huruf tak terlihat dari .env dan input klien
-    // Menggunakan regex /\D/g untuk membuang semua yang bukan angka
-    const cleanOrigin = RAW_ORIGIN_POSTAL ? String(RAW_ORIGIN_POSTAL).replace(/\D/g, '') : "13820";
-    const cleanDestination = destination_postal_code ? String(destination_postal_code).replace(/\D/g, '') : "";
+    // 2. Pembersih Karakter Klien & Env (Hapus huruf/spasi yang tersembunyi)
+    const cleanOriginStr = RAW_ORIGIN_POSTAL ? String(RAW_ORIGIN_POSTAL).replace(/\D/g, '') : "13820";
+    const cleanDestStr = destination_postal_code ? String(destination_postal_code).replace(/\D/g, '') : "";
 
-    // Validasi akhir sebelum terbang ke server BiteShip
-    if (cleanOrigin.length !== 5) {
-      throw new Error(`Kode pos asal dari .env tidak valid (${cleanOrigin}). Harus 5 digit.`);
-    }
-    if (cleanDestination.length !== 5) {
-      throw new Error(`Kode pos Klien tidak valid (${cleanDestination}). Harus 5 digit.`);
+    if (cleanOriginStr.length !== 5 || cleanDestStr.length !== 5) {
+      throw new Error(`Kode pos harus 5 digit angka murni. Asal: ${cleanOriginStr}, Tujuan: ${cleanDestStr}`);
     }
 
-    // Payload murni untuk BiteShip
+    // 3. PAYLOAD MUTLAK: KONVERSI KE ANGKA (INTEGER)
+    // Di sinilah kunci utamanya. BiteShip menolak 'String' untuk kode pos.
     const payload = {
-      origin_postal_code: cleanOrigin,
-      destination_postal_code: cleanDestination,
+      origin_postal_code: parseInt(cleanOriginStr, 10),      // Wajib Number
+      destination_postal_code: parseInt(cleanDestStr, 10), // Wajib Number
       couriers: "tiki,paxel",
       items: items.map((item: any) => ({
-        name: item.name,
-        value: Number(item.price), // Memastikan format angka
-        weight: Number(item.weight_grams) || 10, // Memastikan format angka
-        quantity: Number(item.quantity) // Memastikan format angka
+        name: String(item.name).substring(0, 50), 
+        value: parseInt(item.price, 10),
+        weight: parseInt(item.weight_grams || 10, 10),
+        quantity: parseInt(item.quantity, 10)
       }))
     };
 
+    // 4. Eksekusi ke Satelit BiteShip
     const response = await fetch("https://api.biteship.com/v1/rates/couriers", {
       method: "POST",
       headers: {
-        // Membersihkan spasi pada API Key jika ada
-        "Authorization": `Bearer ${String(BITESHIP_API_KEY).trim()}`,
+        "Authorization": `Bearer ${BITESHIP_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(payload)
@@ -51,11 +47,12 @@ export async function POST(req: Request) {
 
     const data = await response.json();
 
-    // Jika BiteShip masih menolak, kita log error aslinya ke terminal VS Code Anda
     if (!response.ok) {
       console.error("BiteShip Reject Payload:", JSON.stringify(payload, null, 2));
       console.error("BiteShip Error Message:", data);
-      throw new Error(data.error || "Gagal menghubungi satelit logistik. Cek Terminal Anda.");
+      
+      const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+      throw new Error(errorMsg || "Gagal menghubungi satelit logistik BiteShip.");
     }
 
     return NextResponse.json({ success: true, rates: data.pricing });
