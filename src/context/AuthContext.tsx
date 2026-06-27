@@ -7,7 +7,7 @@ import { User } from "@supabase/supabase-js";
 type AuthContextType = {
   user: User | null;
   loading: boolean;
-  isAdmin: boolean; // <-- State baru untuk validasi global
+  isAdmin: boolean;
 };
 
 const AuthContext = createContext<AuthContextType>({ 
@@ -22,7 +22,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    // Fungsi untuk mengecek email di tabel admin_users
     const checkAdminStatus = async (currentUser: User | null) => {
       if (!currentUser?.email) {
         setIsAdmin(false);
@@ -34,23 +33,37 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .eq('email', currentUser.email)
         .single();
       
-      setIsAdmin(!!data); // Jika data ada = true, jika tidak = false
+      setIsAdmin(!!data);
     };
 
-    // Mengecek sesi saat pertama kali dimuat
     const getSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user ?? null);
       await checkAdminStatus(session?.user ?? null);
+      
+      // --- SINKRONISASI COOKIE (SAAT WEB DIMUAT) ---
+      if (session) {
+        document.cookie = "sb-auth-token=true; path=/; max-age=86400; SameSite=Lax;";
+      }
+
       setLoading(false);
     };
 
     getSession();
 
-    // Mendengarkan setiap perubahan status login/logout
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       setUser(session?.user ?? null);
       await checkAdminStatus(session?.user ?? null);
+      
+      // --- SINKRONISASI COOKIE (SAAT LOGIN / LOGOUT) ---
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        // Beritahu Middleware bahwa user sudah masuk
+        document.cookie = "sb-auth-token=true; path=/; max-age=86400; SameSite=Lax;";
+      } else if (event === 'SIGNED_OUT') {
+        // Hapus token agar Middleware tahu user sudah keluar
+        document.cookie = "sb-auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
+      }
+
       setLoading(false);
     });
 
