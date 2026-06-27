@@ -9,6 +9,8 @@ import Footer from "../../components/Footer";
 import LiveTicker from "../../components/LiveTicker";
 import CertificateGenerator from "../../components/CertificateGenerator";
 import { createPortal } from "react-dom";
+import VIPConcierge from "../../components/VIPConcierge";
+import TradingViewChart from "../../components/TradingViewChart";
 
 export default function AkunPage() {
   const { user, loading: authLoading } = useAuth();
@@ -417,6 +419,28 @@ export default function AkunPage() {
           </div>
         </div>
 
+{/* ===================================================================== */}
+        {/* TERMINAL GRAFIK PASAR INTERAKTIF (TRADINGVIEW) */}
+        {/* ===================================================================== */}
+        <div className={`w-full h-[450px] mb-10 p-5 rounded-xl border shadow-sm flex flex-col ${theme.bgCard} ${theme.border} animate-tab-content`} style={{ animationDelay: '0.15s' }}>
+          <div className="flex justify-between items-center mb-4 shrink-0 px-1">
+             <h3 className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 ${theme.textSecondary}`}>
+                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span> Terminal Analisis XAU/USD (Live)
+             </h3>
+             <span className={`text-[9px] uppercase tracking-widest font-bold px-2 py-1 rounded border ${isDark ? 'bg-[#1C221E] border-[#2E3730] text-zinc-500' : 'bg-zinc-100 border-zinc-200 text-zinc-500'}`}>
+               OANDA DATA SOURCE
+             </span>
+          </div>
+          <div className={`flex-1 w-full rounded-lg overflow-hidden border ${theme.border}`}>
+             {/* Render Komponen Grafik */}
+             <TradingViewChart isDark={isDark} />
+          </div>
+        </div>
+        {/* ===================================================================== */}
+
+        {/* TAB NAVIGASI */}
+        <div className={`flex gap-8 border-b mb-8 overflow-x-auto custom-scrollbar ${theme.border} animate-tab-content`} style={{ animationDelay: '0.2s' }}></div>
+
         <div className={`flex gap-8 border-b mb-8 overflow-x-auto custom-scrollbar ${theme.border} animate-tab-content`} style={{ animationDelay: '0.2s' }}>
           <button onClick={() => setActiveTab("portofolio")} className={`pb-4 whitespace-nowrap text-xs font-bold uppercase tracking-widest transition-colors border-b-2 ${activeTab === "portofolio" ? 'border-[#C5A059] text-[#C5A059]' : `border-transparent ${theme.textMuted} hover:${theme.textPrimary}`}`}>Aset Terverifikasi</button>
           <button onClick={() => setActiveTab("riwayat")} className={`pb-4 whitespace-nowrap text-xs font-bold uppercase tracking-widest transition-colors border-b-2 ${activeTab === "riwayat" ? 'border-[#C5A059] text-[#C5A059]' : `border-transparent ${theme.textMuted} hover:${theme.textPrimary}`}`}>Riwayat Transaksi</button>
@@ -766,9 +790,12 @@ export default function AkunPage() {
               </div>
             </div>
           </div>
+                {mounted && <VIPConcierge isDark={isDark} />}
         </>,
         document.body
       )}
+
+
 
       <Footer isDark={isDark} />
     </div>
