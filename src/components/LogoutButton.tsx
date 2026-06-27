@@ -19,7 +19,7 @@ export default function LogoutButton() {
       document.cookie = "sb-auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
       
       // 3. Arahkan ke halaman Login
-      router.push("/login");
+      router.push("/masuk");
     } catch (error) {
       console.error("Kesalahan sistem saat logout:", error);
       setIsLoggingOut(false);
