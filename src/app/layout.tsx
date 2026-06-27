@@ -6,6 +6,7 @@ import { AuthProvider } from "../context/AuthContext";
 // 1. IMPORT PROVIDER & DRAWER
 import { CartProvider } from "../context/CartContext";
 import CartDrawer from "../components/CartDrawer"; 
+import { ToastProvider } from "../context/ToastContext";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const playfair = Playfair_Display({ subsets: ["latin"], variable: "--font-playfair" });
@@ -44,12 +45,14 @@ export default function RootLayout({
   return (
     <html lang="id">
       <body className={`${inter.variable} ${playfair.variable} font-sans antialiased`}>
-        <AuthProvider>
-          <CartProvider>
-            {children}
-            <CartDrawer /> 
-          </CartProvider>
-        </AuthProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <CartProvider>
+              {children}
+              <CartDrawer /> 
+            </CartProvider>
+          </AuthProvider>
+        </ToastProvider>
       </body>
     </html>
   );

@@ -1,38 +1,69 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { User } from "@supabase/supabase-js";
 
-const AuthContext = createContext<any>(null);
+type AuthContextType = {
+  user: User | null;
+  loading: boolean;
+  isAdmin: boolean; // <-- State baru untuk validasi global
+};
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any>(null);
+const AuthContext = createContext<AuthContextType>({ 
+  user: null, 
+  loading: true, 
+  isAdmin: false 
+});
+
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    // 1. Cek sesi saat pertama kali aplikasi dimuat
-    const checkSession = async () => {
+    // Fungsi untuk mengecek email di tabel admin_users
+    const checkAdminStatus = async (currentUser: User | null) => {
+      if (!currentUser?.email) {
+        setIsAdmin(false);
+        return;
+      }
+      const { data } = await supabase
+        .from('admin_users')
+        .select('email')
+        .eq('email', currentUser.email)
+        .single();
+      
+      setIsAdmin(!!data); // Jika data ada = true, jika tidak = false
+    };
+
+    // Mengecek sesi saat pertama kali dimuat
+    const getSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user || null);
+      setUser(session?.user ?? null);
+      await checkAdminStatus(session?.user ?? null);
       setLoading(false);
     };
-    checkSession();
 
-    // 2. Dengarkan secara aktif jika user login/logout di tab mana pun
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setUser(session?.user || null);
-      }
-    );
+    getSession();
 
-    return () => { authListener.subscription.unsubscribe(); };
+    // Mendengarkan setiap perubahan status login/logout
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setUser(session?.user ?? null);
+      await checkAdminStatus(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading }}>
+    <AuthContext.Provider value={{ user, loading, isAdmin }}>
       {children}
     </AuthContext.Provider>
   );
-}
+};
 
 export const useAuth = () => useContext(AuthContext);
