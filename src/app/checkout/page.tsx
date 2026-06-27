@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 import { useToast } from "../../context/ToastContext";
+import VIPConcierge from "../../components/VIPConcierge";
 
 export default function CheckoutPage() {
   const { cart, clearCart } = useCart();
@@ -22,6 +23,8 @@ export default function CheckoutPage() {
   const [loadingRates, setLoadingRates] = useState(false);
   const [shippingRates, setShippingRates] = useState<any[]>([]);
   const [selectedRate, setSelectedRate] = useState<any>(null);
+  const [isDark, setIsDark] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "", email: "", phone: "", address: "", postalCode: ""
@@ -45,6 +48,12 @@ export default function CheckoutPage() {
       fetchBanks();
     }
   }, [user]);
+
+    useEffect(() => {
+    setMounted(true);
+    const savedTheme = localStorage.getItem("nexus-theme");
+    if (savedTheme === "dark") setIsDark(true);
+  }, []);
 
   const handleCheckShipping = async () => {
     if (!formData.postalCode || formData.postalCode.length < 5) {
@@ -140,6 +149,13 @@ export default function CheckoutPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+    const theme = {
+    bgMain: isDark ? "bg-[#0F110F]" : "bg-[#FDFDFB]", bgCard: isDark ? "bg-[#161B18]" : "bg-white",
+    bgSection: isDark ? "bg-[#121412]" : "bg-[#F3F5F4]", textPrimary: isDark ? "text-zinc-100" : "text-[#1A241E]", 
+    textSecondary: isDark ? "text-zinc-400" : "text-[#3A4D40]", textMuted: isDark ? "text-zinc-500" : "text-[#6A7C70]",
+    border: isDark ? "border-[#2E3730]" : "border-[#E1E5E2]",
   };
 
   // --- FUNGSI TEMA BANK DINAMIS ---
@@ -441,7 +457,16 @@ export default function CheckoutPage() {
 
           </form>
         )}
+                        {mounted && <VIPConcierge isDark={isDark} />}
       </main>
     </div>
   );
 }
+
+function setMounted(arg0: boolean) {
+  throw new Error("Function not implemented.");
+}
+function setIsDark(arg0: boolean) {
+  throw new Error("Function not implemented.");
+}
+

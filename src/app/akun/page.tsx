@@ -11,6 +11,7 @@ import CertificateGenerator from "../../components/CertificateGenerator";
 import { createPortal } from "react-dom";
 import VIPConcierge from "../../components/VIPConcierge";
 import TradingViewChart from "../../components/TradingViewChart";
+import PriceAlertWidget from "../../components/PriceAlertWidget";
 
 export default function AkunPage() {
   const { user, loading: authLoading } = useAuth();
@@ -25,6 +26,7 @@ export default function AkunPage() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [productDb, setProductDb] = useState<any[]>([]); 
   const [goldAnalysis, setGoldAnalysis] = useState<any>(null);
+  const [isChartOpen, setIsChartOpen] = useState(false);
 
   // --- STATE UI CEREMONY ---
   const [certModal, setCertModal] = useState({ isOpen: false, invoice: null as any });
@@ -380,61 +382,139 @@ export default function AkunPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-10 animate-tab-content" style={{ animationDelay: '0.1s' }}>
-          <div className={`lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-6`}>
-            <div className={`p-6 rounded-xl border shadow-sm ${theme.bgCard} ${theme.border} flex flex-col justify-between transition-all duration-300 hover:shadow-lg`}>
-              <div className="flex justify-between items-start mb-4">
-                <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.textMuted}`}>Total Modal Diinvestasikan</p>
-                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest ${theme.bgSection} ${theme.textSecondary}`}>{totalGrams.toFixed(2)} Gram Emas</span>
+{/* KOLOM KIRI (METRIK & KOMPOSISI ASET) */}
+          <div className="lg:col-span-8 flex flex-col gap-6">
+            
+            {/* 1. Baris Atas: Kartu Metrik (Kompak & Padat) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className={`p-5 rounded-xl border shadow-sm ${theme.bgCard} ${theme.border} hover:shadow-lg transition-all`}>
+                <div className="flex justify-between items-start mb-3">
+                  <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.textMuted}`}>Total Modal Diinvestasikan</p>
+                  <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest ${theme.bgSection} ${theme.textSecondary}`}>{totalGrams.toFixed(2)} Gram</span>
+                </div>
+                <p className="text-2xl font-black font-mono tracking-tight text-zinc-100">Rp {new Intl.NumberFormat("id-ID").format(totalInvested)}</p>
               </div>
-              <p className="text-3xl font-black font-mono tracking-tight">Rp {new Intl.NumberFormat("id-ID").format(totalInvested)}</p>
+
+              <div className={`p-5 rounded-xl border shadow-sm relative overflow-hidden transition-all hover:shadow-lg ${isDark ? 'bg-gradient-to-br from-[#161B18] to-[#121814] border-[#2E3730]' : 'bg-gradient-to-br from-white to-[#F3F5F4] border-[#E1E5E2]'}`}>
+                <div className={`absolute top-0 right-0 w-1.5 h-full ${roiPercentage >= 0 ? 'bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`}></div>
+                <div className="flex justify-between items-start mb-3">
+                  <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.textMuted}`}>Nilai Likuidasi Terkini</p>
+                  <div className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded backdrop-blur-sm ${roiPercentage >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>{roiPercentage >= 0 ? '▲' : '▼'} {Math.abs(roiPercentage).toFixed(2)}%</div>
+                </div>
+                <p className={`text-2xl font-black font-mono tracking-tight ${roiPercentage >= 0 ? 'text-green-500' : 'text-red-500'}`}>Rp {new Intl.NumberFormat("id-ID").format(currentLiquidationValue)}</p>
+                <div className="mt-2 text-[9px] font-bold font-mono">
+                  <span className={theme.textMuted}>Unrealized P/L: </span>
+                  <span className={roiPercentage >= 0 ? 'text-green-500' : 'text-red-500'}>{roiPercentage >= 0 ? '+' : '-'} Rp {new Intl.NumberFormat("id-ID").format(Math.abs(unrealizedProfit))}</span>
+                </div>
+              </div>
             </div>
-            <div className={`p-6 rounded-xl border shadow-sm relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:-translate-y-1 ${isDark ? 'bg-gradient-to-br from-[#161B18] to-[#121814] border-[#2E3730]' : 'bg-gradient-to-br from-white to-[#F3F5F4] border-[#E1E5E2]'}`}>
-              <div className={`absolute top-0 right-0 w-1.5 h-full ${roiPercentage >= 0 ? 'bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`}></div>
-              <div className="flex justify-between items-start mb-4">
-                <p className={`text-[10px] font-bold uppercase tracking-widest ${theme.textMuted}`}>Nilai Likuidasi Terkini</p>
-                <div className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded backdrop-blur-sm ${roiPercentage >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>{roiPercentage >= 0 ? '▲' : '▼'} {Math.abs(roiPercentage).toFixed(2)}%</div>
+
+            {/* 2. Baris Bawah: Fitur Baru (Distribusi & Komposisi Brankas) */}
+            <div className={`flex-1 p-6 rounded-xl border shadow-sm ${theme.bgCard} ${theme.border} flex flex-col justify-between`}>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className={`text-[10px] font-bold uppercase tracking-widest ${theme.textSecondary}`}>Komposisi Portofolio Fisik</h3>
+                <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded ${theme.bgSection} ${theme.textMuted}`}>{portfolio.length} Entitas Aset</span>
               </div>
-              <p className={`text-3xl font-black font-mono tracking-tight ${roiPercentage >= 0 ? 'text-green-500' : 'text-red-500'}`}>Rp {new Intl.NumberFormat("id-ID").format(currentLiquidationValue)}</p>
-              <div className="mt-2 text-xs font-bold font-mono">
-                <span className={theme.textMuted}>Unrealized P/L: </span>
-                <span className={roiPercentage >= 0 ? 'text-green-500' : 'text-red-500'}>{roiPercentage >= 0 ? '+' : '-'} Rp {new Intl.NumberFormat("id-ID").format(Math.abs(unrealizedProfit))}</span>
-              </div>
+              
+              {portfolio.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center text-xs text-zinc-500 font-mono">BRANKAS_KOSONG</div>
+              ) : (
+                <div className="space-y-5 flex-1">
+                  {portfolio.slice(0, 3).map((item, idx) => {
+                    // Kalkulasi rasio persentase gramasi emas terhadap total keseluruhan
+                    const weightRatio = totalGrams > 0 ? (item.totalWeight / totalGrams) * 100 : 0;
+                    return (
+                      <div key={idx} className="space-y-2">
+                        <div className="flex justify-between items-end text-xs">
+                          <div>
+                            <span className={`font-bold ${theme.textPrimary} block`}>{item.name}</span>
+                            <span className={`text-[9px] uppercase tracking-widest ${theme.textMuted}`}>{item.quantity} Keping Aktif</span>
+                          </div>
+                          <span className={`font-mono font-bold ${theme.textSecondary}`}>{item.totalWeight}g <span className="opacity-50 text-[10px]">({weightRatio.toFixed(1)}%)</span></span>
+                        </div>
+                        <div className={`w-full h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-[#1C221E]' : 'bg-zinc-100'}`}>
+                          <div className="h-full bg-gradient-to-r from-[#C5A059] to-[#8C6D31] rounded-full" style={{ width: `${weightRatio}%` }}></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  
+                  {portfolio.length > 3 && (
+                    <p className={`text-[10px] text-center pt-2 italic ${theme.textMuted}`}>
+                      + {portfolio.length - 3} aset spesifik lainnya tersimpan di brankas...
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+            
           </div>
-          <div className={`lg:col-span-4 p-6 rounded-xl border shadow-sm ${theme.bgCard} ${theme.border} flex flex-col`}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 ${theme.textSecondary}`}><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Market Radar</h3>
+            {/* Radar Market & Price Alerts */}
+            <div className="lg:col-span-4 flex flex-col gap-6">
+            {/* Kotak Harga Market */}
+            <div className={`p-6 rounded-xl border shadow-sm ${theme.bgCard} ${theme.border} flex flex-col`}>
+                <div className="flex justify-between items-center mb-4">
+                <h3 className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 ${theme.textSecondary}`}><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Market Radar</h3>
+                </div>
+                <div className="flex-1 flex flex-col justify-center space-y-4">
+                <div className={`p-4 rounded-lg border ${theme.bgSection} ${theme.border}`}>
+                    <p className={`text-[9px] uppercase tracking-widest mb-1 ${theme.textMuted}`}>Spot Global / Gram</p>
+                    <p className={`text-xl font-bold font-mono ${theme.textPrimary}`}>Rp {new Intl.NumberFormat("id-ID").format(goldAnalysis?.rawGramPrice || 1361639)}</p>
+                </div>
+                </div>
             </div>
-            <div className="flex-1 flex flex-col justify-center space-y-4">
-              <div className={`p-4 rounded-lg border ${theme.bgSection} ${theme.border}`}>
-                <p className={`text-[9px] uppercase tracking-widest mb-1 ${theme.textMuted}`}>Spot Global / Gram</p>
-                <p className={`text-xl font-bold font-mono ${theme.textPrimary}`}>Rp {new Intl.NumberFormat("id-ID").format(goldAnalysis?.rawGramPrice || 1361639)}</p>
-              </div>
-              <div className={`p-4 rounded-lg border ${theme.bgSection} ${theme.border} relative overflow-hidden`}>
-                <div className="absolute top-0 right-0 p-2 opacity-10 text-[#C5A059]"><svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
-                <p className={`text-[9px] uppercase tracking-widest mb-1 ${theme.textMuted}`}>Estimasi Harga Antam</p>
-                <p className={`text-xl font-bold font-mono text-[#C5A059]`}>Rp {new Intl.NumberFormat("id-ID").format(goldAnalysis?.estimatedAntamPrice || 1450000)}</p>
-              </div>
+
+            {/* Widget Sistem Alarm Harga (Otomatis menyesuaikan tinggi) */}
+            <div className="flex-1 min-h-[250px]">
+                <PriceAlertWidget 
+                currentSpotPrice={goldAnalysis?.rawGramPrice || 0} 
+                isDark={isDark} 
+                />
             </div>
-          </div>
+            </div>
         </div>
 
-{/* ===================================================================== */}
-        {/* TERMINAL GRAFIK PASAR INTERAKTIF (TRADINGVIEW) */}
         {/* ===================================================================== */}
-        <div className={`w-full h-[450px] mb-10 p-5 rounded-xl border shadow-sm flex flex-col ${theme.bgCard} ${theme.border} animate-tab-content`} style={{ animationDelay: '0.15s' }}>
-          <div className="flex justify-between items-center mb-4 shrink-0 px-1">
-             <h3 className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 ${theme.textSecondary}`}>
-                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span> Terminal Analisis XAU/USD (Live)
-             </h3>
-             <span className={`text-[9px] uppercase tracking-widest font-bold px-2 py-1 rounded border ${isDark ? 'bg-[#1C221E] border-[#2E3730] text-zinc-500' : 'bg-zinc-100 border-zinc-200 text-zinc-500'}`}>
-               OANDA DATA SOURCE
-             </span>
-          </div>
-          <div className={`flex-1 w-full rounded-lg overflow-hidden border ${theme.border}`}>
-             {/* Render Komponen Grafik */}
-             <TradingViewChart isDark={isDark} />
-          </div>
+        {/* TERMINAL GRAFIK PASAR INTERAKTIF (COLLAPSIBLE / DROPDOWN) */}
+        {/* ===================================================================== */}
+        <div className={`w-full mb-10 rounded-xl border shadow-sm flex flex-col ${theme.bgCard} ${theme.border} animate-tab-content`} style={{ animationDelay: '0.15s' }}>
+          
+          {/* Tombol Pemicu Buka/Tutup */}
+          <button 
+            onClick={() => setIsChartOpen(!isChartOpen)}
+            className="flex justify-between items-center p-5 w-full text-left transition-colors hover:bg-black/5 rounded-xl group"
+          >
+            <div className="flex items-center gap-3">
+              <span className={`w-2 h-2 rounded-full ${isChartOpen ? 'bg-green-500 animate-pulse' : 'bg-zinc-500'}`}></span>
+              <h3 className={`text-[10px] font-bold uppercase tracking-widest ${theme.textSecondary} group-hover:text-[#C5A059] transition-colors`}>
+                Terminal Analisis XAU/USD (Live)
+              </h3>
+              <span className={`text-[9px] uppercase tracking-widest font-bold px-2 py-0.5 rounded border ${isDark ? 'bg-[#1C221E] border-[#2E3730] text-zinc-500' : 'bg-zinc-100 border-zinc-200 text-zinc-500'}`}>
+                OANDA DATA SOURCE
+              </span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className={`text-[9px] font-bold uppercase tracking-widest ${theme.textMuted}`}>
+                {isChartOpen ? 'Tutup Terminal' : 'Buka Terminal'}
+              </span>
+              <svg 
+                className={`w-4 h-4 transform transition-transform duration-300 ${isChartOpen ? 'rotate-180 text-[#C5A059]' : theme.textMuted}`} 
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </button>
+
+          {/* Area Grafik (Hanya dirender saat isChartOpen = true) */}
+          {isChartOpen && (
+            <div className={`w-full h-[450px] p-5 pt-0 border-t animate-slide-up ${theme.border}`}>
+               <div className={`w-full h-full rounded-lg overflow-hidden border mt-4 ${theme.border}`}>
+                 <TradingViewChart isDark={isDark} />
+               </div>
+            </div>
+          )}
+          
         </div>
         {/* ===================================================================== */}
 

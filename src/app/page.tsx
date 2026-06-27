@@ -10,6 +10,7 @@ import { useAuth } from "../context/AuthContext";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import Image from "next/image";
+import VIPConcierge from "../components/VIPConcierge";
 import Link from "next/link";
 
 export default function PublicHomePage() {
@@ -309,7 +310,7 @@ export default function PublicHomePage() {
         </div>,
         document.body
       )}
-
+      {mounted && <VIPConcierge isDark={isDark} />}
       {notification && <SoftNotification message={notification} onClose={() => setNotification(null)} />}
     </main>
   );

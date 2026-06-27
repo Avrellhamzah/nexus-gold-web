@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../../context/AuthContext";
 import Navbar from "../../components/Navbar";
 import Footer from "../../components/Footer";
+import VIPConcierge from "../../components/VIPConcierge";
 import Image from "next/image";
 
 export default function KatalogPage() {
