@@ -12,7 +12,6 @@ export default function AdminConciergePage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
 
-  // 1. Tarik daftar klien yang pernah memulai obrolan
   useEffect(() => {
     fetchConversations();
     
@@ -28,21 +27,19 @@ export default function AdminConciergePage() {
   }, []);
 
   const fetchConversations = async () => {
-    // Mengambil pesan terbaru untuk mengelompokkan klien unik
-    const { data, error } = await supabase
-      .from("concierge_messages")
-      .select("user_id, created_at, auth_users:user_id(email, raw_user_meta_data)")
-      .order("created_at", { ascending: false });
+    // MEMANGGIL FUNGSI RPC YANG BARU SAJA KITA BUAT DI SUPABASE
+    const { data, error } = await supabase.rpc('get_concierge_conversations');
+    
+    if (error) {
+      console.error("Gagal menarik antrean:", error.message);
+      return;
+    }
 
     if (data) {
-      // Filter agar hanya muncul 1 nama per klien (distinct)
-      const uniqueClients = Array.from(new Set(data.map(m => m.user_id)))
-        .map(id => data.find(m => m.user_id === id));
-      setConversations(uniqueClients);
+      setConversations(data);
     }
   };
 
-  // 2. Tarik riwayat pesan saat admin memilih salah satu klien
   useEffect(() => {
     if (!selectedUser) return;
 
@@ -57,7 +54,6 @@ export default function AdminConciergePage() {
 
     fetchUserMessages();
 
-    // Aktifkan radar khusus untuk klien yang sedang diajak bicara
     const channel = supabase
       .channel(`admin:chat:${selectedUser.user_id}`)
       .on(
@@ -75,12 +71,10 @@ export default function AdminConciergePage() {
     return () => { supabase.removeChannel(channel); };
   }, [selectedUser]);
 
-  // 3. Auto-scroll ke pesan terbaru
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // 4. Eksekusi Balasan Admin
   const handleReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!replyText.trim() || !selectedUser) return;
@@ -119,8 +113,6 @@ export default function AdminConciergePage() {
           {conversations.length === 0 ? (
              <p className="p-5 text-xs text-zinc-500 text-center">Belum ada transmisi masuk.</p>
           ) : conversations.map((conv, idx) => {
-            const meta = conv.auth_users?.raw_user_meta_data;
-            const email = conv.auth_users?.email;
             const isSelected = selectedUser?.user_id === conv.user_id;
 
             return (
@@ -129,8 +121,8 @@ export default function AdminConciergePage() {
                 onClick={() => setSelectedUser(conv)}
                 className={`w-full text-left p-4 transition-all hover:bg-[#1C221E] ${isSelected ? "bg-[#1C221E] border-l-4 border-[#C5A059]" : "border-l-4 border-transparent"}`}
               >
-                <p className="text-sm font-bold text-zinc-200 truncate">{meta?.full_name || "Klien Premium"}</p>
-                <p className="text-[10px] font-mono text-zinc-500 truncate">{email}</p>
+                <p className="text-sm font-bold text-zinc-200 truncate">{conv.client_name}</p>
+                <p className="text-[10px] font-mono text-zinc-500 truncate">{conv.client_email}</p>
               </button>
             );
           })}
@@ -148,8 +140,8 @@ export default function AdminConciergePage() {
             {/* Header Chat Admin */}
             <div className="p-5 border-b border-[#2E3730] bg-[#161B18] flex justify-between items-center shrink-0">
               <div>
-                <h3 className="text-sm font-bold text-zinc-100">{selectedUser.auth_users?.raw_user_meta_data?.full_name || "Klien Premium"}</h3>
-                <p className="text-[10px] text-zinc-500 font-mono">{selectedUser.auth_users?.email}</p>
+                <h3 className="text-sm font-bold text-zinc-100">{selectedUser.client_name}</h3>
+                <p className="text-[10px] text-zinc-500 font-mono">{selectedUser.client_email}</p>
               </div>
               <span className="bg-green-900/30 text-green-500 border border-green-900/50 px-2 py-1 rounded text-[9px] uppercase tracking-widest font-bold">Terhubung</span>
             </div>
