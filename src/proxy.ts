@@ -6,7 +6,7 @@ export async function proxy(request: NextRequest) {
 
   // 1. Tentukan rute yang membutuhkan proteksi admin
   const isAdminRoute = pathname.startsWith("/admin");
-  const isLoginRoute = pathname === "/login";
+  const isLoginRoute = pathname === "/masuk";
 
   // 2. Ambil token sesi Supabase dari Cookies
   // Supabase biasanya menyimpan auth token dengan pola nama 'sb-X-auth-token'
@@ -16,7 +16,7 @@ export async function proxy(request: NextRequest) {
   // 3. LOGIKA PROTEKSI:
   // Jika mencoba mengakses halaman admin tetapi tidak ada sesi login, tendang ke /login
   if (isAdminRoute && !hasSupabaseSession) {
-    const loginUrl = new URL("/login", request.url);
+    const loginUrl = new URL("/masuk", request.url);
     // Simpan URL asal agar setelah login bisa langsung diarahkan kembali ke halaman ini
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);
