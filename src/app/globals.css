@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(1rem); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Transisi Masuk Halaman Utama */
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.animate-page-enter {
+  animation: pageEnter 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Transisi Pop-Up Modal (Zoom & Fade) */
+@keyframes modalEnter {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-modal-enter {
+  animation: modalEnter 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Transisi Latar Belakang Gelap */
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade {
+  animation: fade 0.4s ease-out forwards;
+}
+
+/* Transisi Kartu Grid Berurutan */
+.animate-stagger {
+  opacity: 0; /* Mulai dari tidak terlihat */
+  animation: pageEnter 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Transisi Panel Samping (Dari Kanan ke Kiri) */
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slideInRight 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Efek Kilau Kaca / Emas pada Kartu Produk */
+@keyframes shine {
+  100% { left: 125%; }
+}
+
+.shine-effect {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  z-index: 20;
+  display: block;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%);
+  transform: skewX(-25deg);
+}
+
+.group:hover .shine-effect {
+  animation: shine 0.8s ease-in-out;
+}

@@ -1,0 +1,169 @@
+"use client";
+
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import LogoutButton from "../../components/LogoutButton";
+import { useState, useEffect } from 'react';
+
+// --- IKON SVG UNTUK SIDEBAR ---
+const Icons = {
+  Dashboard: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>,
+  Category: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>,
+  Product: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>,
+  Order: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg>,
+  Invoice: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
+  KYC: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>,
+  Audit: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
+};
+
+// --- STRUKTUR NAVIGASI ENTERPRISE ---
+const navigationGroups = [
+  {
+    title: "Tinjauan Eksekutif",
+    items: [
+      { name: "Dasbor Utama", path: "/admin", icon: Icons.Dashboard }
+    ]
+  },
+  {
+    title: "Manajemen Inventaris",
+    items: [
+      { name: "Kategori Komoditas", path: "/admin/kategori", icon: Icons.Category },
+      { name: "Katalog Master", path: "/admin/produk", icon: Icons.Product }
+    ]
+  },
+  {
+    title: "Operasional",
+    items: [
+      { name: "Pusat Logistik", path: "/admin/pesanan", icon: Icons.Order },
+      { name: "Buku Besar (Invoice)", path: "/admin/transaksi", icon: Icons.Invoice }
+    ]
+  },
+  {
+    title: "Kepatuhan & Keamanan",
+    items: [
+      { name: "Verifikasi KYC", path: "/admin/kyc", icon: Icons.KYC },
+      { name: "Log Audit Sistem", path: "/admin/audit", icon: Icons.Audit }
+    ]
+  }
+];
+
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const [currentTime, setCurrentTime] = useState("");
+
+  // Efek untuk jam realtime di topbar (menambah kesan "Command Center")
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex h-screen bg-[#0F110F] text-zinc-100 font-sans antialiased">
+      
+      {/* SIDEBAR STRUKTURAL */}
+      <aside className="w-64 bg-[#121412] border-r border-[#2E3730] flex flex-col justify-between shadow-2xl relative z-20">
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          
+          {/* Header Sidebar */}
+          <div className="h-20 flex items-center px-6 border-b border-[#2E3730] bg-[#161B18] sticky top-0 z-10">
+            <div className="flex items-center gap-3">
+              <div className="w-6 h-6 bg-[#C5A059] rounded-sm flex items-center justify-center">
+                <span className="text-[#0F110F] font-black text-xs font-[family-name:var(--font-playfair)]">N</span>
+              </div>
+              <span className="text-xs uppercase tracking-[0.2em] font-bold text-[#C5A059]">
+                NEXUS GOLD
+              </span>
+            </div>
+          </div>
+          
+          {/* Menu Navigasi - Dikelompokkan dengan Rapi */}
+          <nav className="p-4 space-y-6">
+            {navigationGroups.map((group, idx) => (
+              <div key={idx}>
+                <div className="text-[9px] uppercase tracking-widest text-zinc-600 px-4 mb-2 font-bold">
+                  {group.title}
+                </div>
+                <div className="space-y-1">
+                  {group.items.map((item) => {
+                    const isActive = pathname === item.path;
+                    return (
+                      <Link 
+                        key={item.path} 
+                        href={item.path} 
+                        className={`flex items-center gap-3 px-4 py-2.5 text-xs font-semibold rounded-md transition-all duration-200 border-l-2
+                          ${isActive 
+                            ? 'bg-[#1C221E] text-[#C5A059] border-[#C5A059] shadow-inner' 
+                            : 'border-transparent text-zinc-400 hover:bg-[#161B18] hover:text-zinc-200'
+                          }`}
+                      >
+                        <span className={isActive ? 'text-[#C5A059]' : 'text-zinc-500'}>
+                          {item.icon}
+                        </span>
+                        {item.name}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </nav>
+        </div>
+
+        {/* Footer Sidebar */}
+        <div className="p-4 border-t border-[#2E3730] bg-[#161B18] flex flex-col gap-3">
+          <div className="flex items-center justify-between px-2">
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span>
+              <span className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold">Sistem Stabil</span>
+            </div>
+            <span className="text-[10px] font-mono text-zinc-500">{currentTime}</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* AREA KONTEN UTAMA */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative z-10">
+        
+        {/* Topbar / Atasan Kerja */}
+        <header className="h-20 bg-[#121412]/80 backdrop-blur-md border-b border-[#2E3730] flex items-center justify-between px-8 z-20">
+          <div className="flex items-center gap-4">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold border border-[#2E3730] px-2.5 py-1 rounded bg-[#161B18]">
+              Environment: Production
+            </span>
+          </div>
+          
+          <div className="flex items-center gap-6">
+            {/* Ikon Lonceng Notifikasi (Kosmetika UI Enterprise) */}
+            <button className="text-zinc-500 hover:text-[#C5A059] transition-colors relative">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+              <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+            </button>
+            
+            <div className="h-5 w-px bg-[#2E3730]"></div>
+
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col items-end">
+                <span className="text-xs font-bold text-zinc-200">Admin Utama</span>
+                <span className="text-[9px] text-[#C5A059] uppercase tracking-widest">Akses Penuh</span>
+              </div>
+              <div className="w-9 h-9 rounded bg-[#1C221E] border border-[#C5A059]/30 flex items-center justify-center text-sm font-bold text-[#C5A059] shadow-sm">
+                A
+              </div>
+              <LogoutButton></LogoutButton>
+            </div>
+          </div>
+        </header>
+
+        {/* Wadah Halaman Dinamis */}
+        <main className="flex-1 overflow-y-auto p-6 md:p-8 bg-[#0F110F] custom-scrollbar">
+          <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
+            {children}
+          </div>
+        </main>
+      </div>
+
+    </div>
+  );
+}
