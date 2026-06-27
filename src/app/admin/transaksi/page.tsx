@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { supabase, logAdminAction } from "../../../lib/supabase";
 import ExcelJS from "exceljs";
 import PaginatedTable, { TableColumn } from "../../../components/PaginatedTable";
+import { useToast } from "../../../context/ToastContext"; // Menggunakan Toast Global
 
 export default function TransaksiPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -14,7 +15,7 @@ export default function TransaksiPage() {
 
   // --- STATE UI/UX ---
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [toast, setToast] = useState({ show: false, message: "", type: "success", trigger: 0 });
+  const { showToast } = useToast(); // Menginisialisasi Toast Global
 
   // Form State
   const [selectedProductId, setSelectedProductId] = useState("");
@@ -25,22 +26,16 @@ export default function TransaksiPage() {
   const [shippingCost, setShippingCost] = useState("0");
   const [status, setStatus] = useState("LUNAS");
 
-  const showToast = (message: string, type: "success" | "error" = "success") => {
-    setToast({ show: true, message, type, trigger: Date.now() });
-  };
-
-  useEffect(() => {
-    if (toast.show) {
-      const timer = setTimeout(() => setToast(prev => ({ ...prev, show: false })), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [toast.trigger, toast.show]);
-
   const fetchData = async () => {
+    // Menarik data produk
     const { data: prodData } = await supabase.from("products").select("*").is("deleted_at", null).gt("stock_quantity", 0);
     if (prodData) setProducts(prodData);
 
-    const { data: invData } = await supabase.from("invoices").select("*, invoice_items(*)").order("created_at", { ascending: false });
+    // Menarik data invoice untuk UI DASBOR (Dibatasi 100 terbaru agar performa browser tetap ringan)
+    const { data: invData } = await supabase.from("invoices")
+      .select("*, invoice_items(*)")
+      .order("created_at", { ascending: false })
+      .limit(100); 
     if (invData) setInvoices(invData);
   };
 
@@ -91,7 +86,7 @@ export default function TransaksiPage() {
 
       await logAdminAction(adminEmail, "TRANSACTION", `Menginput transaksi manual (${invoiceNumber}) untuk ${customerName}. Total: Rp ${estimatedTotal}`, "invoices", invData.id);
 
-      showToast("Transaksi manual berhasil dicatat!");
+      showToast("Transaksi manual berhasil dicatat!", "success");
       resetForm();
       fetchData();
     } catch (err: any) {
@@ -107,7 +102,7 @@ export default function TransaksiPage() {
       const { data: userData } = await supabase.auth.getUser();
       await supabase.from("invoices").update({ status: "LUNAS" }).eq("id", invoiceId);
       await logAdminAction(userData.user?.email || "Unknown", "TRANSACTION", `Mengotorisasi pelunasan untuk invoice ID: ${invoiceId}`, "invoices", invoiceId);
-      showToast("Status berhasil diperbarui.");
+      showToast("Status berhasil diperbarui.", "success");
       fetchData(); 
     } catch (err) { showToast("Gagal mengupdate status.", "error"); }
   };
@@ -118,7 +113,7 @@ export default function TransaksiPage() {
       const { data: userData } = await supabase.auth.getUser();
       await supabase.from("invoices").update({ status: "BATAL" }).eq("id", invoiceId);
       await logAdminAction(userData.user?.email || "Unknown", "TRANSACTION", `Membatalkan invoice secara manual ID: ${invoiceId}`, "invoices", invoiceId);
-      showToast("Transaksi dibatalkan.");
+      showToast("Transaksi dibatalkan.", "success");
       fetchData();
     } catch (err) { showToast("Gagal membatalkan transaksi.", "error"); }
   };
@@ -139,7 +134,6 @@ export default function TransaksiPage() {
     inv.invoice_number?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // --- DEFINISI KOLOM UNTUK PAGINATED TABLE ---
   const columns: TableColumn<any>[] = [
     {
       header: "Tanggal & No",
@@ -190,14 +184,25 @@ export default function TransaksiPage() {
     }
   ];
 
+  // --- FUNGSI EKSPOR ENTERPRISE GRADE ---
   const exportToExcel = async () => {
-    if (invoices.length === 0) {
-      showToast("Tidak ada data transaksi untuk diekspor.", "error");
-      return;
-    }
     setExporting(true);
 
     try {
+      // 1. Tarik SELURUH data transaksi tanpa memedulikan batas paginasi UI
+      const { data: allData, error } = await supabase
+        .from("invoices")
+        .select("*, invoice_items(*)")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      if (!allData || allData.length === 0) {
+        showToast("Tidak ada data transaksi mutlak untuk diekspor.", "error");
+        setExporting(false);
+        return;
+      }
+
+      // 2. Susun dokumen ExcelJS
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet("Laporan Penjualan");
 
@@ -217,8 +222,7 @@ export default function TransaksiPage() {
       headerRow.alignment = { vertical: "middle", horizontal: "center" };
       headerRow.height = 25;
 
-      invoices.forEach((inv) => {
-        // Menggabungkan nama produk jika ada lebih dari 1 item dalam 1 invoice
+      allData.forEach((inv) => {
         const productNames = inv.invoice_items?.map((i: any) => `${i.quantity}x ${i.product_name}`).join(", ") || "-";
 
         const row = worksheet.addRow({
@@ -237,6 +241,7 @@ export default function TransaksiPage() {
         row.getCell("status").alignment = { horizontal: "center" };
       });
 
+      // 3. Picu Unduhan Virtual
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = window.URL.createObjectURL(blob);
@@ -246,7 +251,17 @@ export default function TransaksiPage() {
       anchor.click();
       window.URL.revokeObjectURL(url);
       
-      showToast("Laporan Excel berhasil diunduh.");
+      // 4. Catat Tindakan Ekspor ke Audit Trail
+      const { data: userData } = await supabase.auth.getUser();
+      await logAdminAction(
+        userData.user?.email || "Unknown", 
+        "SYSTEM", 
+        `Mengekspor laporan finansial mutlak (${allData.length} baris) ke format Excel`, 
+        "invoices", 
+        null
+      );
+
+      showToast("Laporan Excel berhasil diunduh.", "success");
 
     } catch (err: any) {
       showToast("Gagal mengekspor berkas: " + err.message, "error");
@@ -265,7 +280,8 @@ export default function TransaksiPage() {
           <p className="text-xs text-zinc-500 mt-1">Laporan finansial dan kasir manual.</p>
         </div>
         <div className="flex gap-4">
-          <button onClick={exportToExcel} disabled={exporting} className="bg-transparent border border-zinc-700 text-zinc-300 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:bg-zinc-800 transition-colors shadow-sm">
+          <button onClick={exportToExcel} disabled={exporting} className="bg-transparent border border-zinc-700 text-zinc-300 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:bg-zinc-800 transition-colors shadow-sm flex items-center gap-2">
+            {exporting && <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
             {exporting ? "Menyusun..." : "Unduh Rekap"}
           </button>
           <button onClick={() => setIsDrawerOpen(true)} className="bg-[#C5A059] text-[#0F110F] px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:bg-[#B38F4B] transition-colors shadow-lg shadow-[#C5A059]/10">
@@ -274,7 +290,7 @@ export default function TransaksiPage() {
         </div>
       </div>
 
-      {/* SEARCH BAR (Terkunci di Atas Tabel) */}
+      {/* SEARCH BAR */}
       <div className="bg-[#121412] p-4 rounded border border-[#2E3730] flex items-center">
         <svg className="w-5 h-5 text-zinc-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
         <input 
@@ -361,14 +377,6 @@ export default function TransaksiPage() {
           </div>
         </div>
       </div>
-
-      {/* --- TOAST --- */}
-      <div className={`fixed bottom-8 right-8 z-[150] transition-all duration-300 ease-out transform ${toast.show ? 'translate-x-0 opacity-100' : 'translate-x-8 opacity-0 pointer-events-none'}`}>
-        <div className={`px-6 py-4 rounded shadow-2xl border-l-4 ${toast.type === 'success' ? 'bg-[#1C221E] border-[#C5A059]' : 'bg-[#221818] border-red-500'}`}>
-          <p className="text-sm font-medium text-zinc-100 tracking-wide">{toast.message}</p>
-        </div>
-      </div>
-
     </div>
   );
 }
