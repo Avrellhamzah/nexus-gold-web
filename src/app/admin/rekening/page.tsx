@@ -78,7 +78,7 @@ export default function AdminRekeningPage() {
                 <p className="text-lg font-mono text-zinc-300">{bank.account_number}</p>
                 <p className="text-[10px] text-zinc-500 uppercase tracking-wider mt-1">A.N {bank.account_name}</p>
               </div>
-              <button onClick={() => handleDelete(bank.id)} className="text-[10px] font-bold uppercase tracking-widest text-red-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-2 border border-red-900/50 rounded bg-red-900/10">Hapus</button>
+              <button onClick={() => handleDelete(bank.id)} className="text-[10px] font-bold uppercase tracking-widest text-red-500 hover:text-red-400 group-hover:opacity-100 transition-opacity p-2 border border-red-900/50 rounded bg-red-900/10">Hapus</button>
             </div>
           ))}
         </div>

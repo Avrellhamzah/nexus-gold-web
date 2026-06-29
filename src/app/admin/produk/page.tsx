@@ -243,7 +243,7 @@ export default function ProdukPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <div className="flex items-center justify-end gap-4 group-hover:opacity-100 transition-opacity duration-300">
                         <button onClick={() => triggerRestock(prod)} className="text-green-500 hover:text-green-400 text-[10px] font-bold uppercase tracking-widest transition-colors">+ Restock</button>
                         <span className="text-zinc-700">|</span>
                         <button onClick={() => handleEdit(prod)} className="text-[#C5A059] hover:text-white text-[10px] font-bold uppercase tracking-widest transition-colors">Edit</button>

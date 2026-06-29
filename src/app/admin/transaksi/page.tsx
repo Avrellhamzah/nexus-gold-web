@@ -1,382 +1,365 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { supabase, logAdminAction } from "../../../lib/supabase";
-import ExcelJS from "exceljs";
-import PaginatedTable, { TableColumn } from "../../../components/PaginatedTable";
-import { useToast } from "../../../context/ToastContext"; // Menggunakan Toast Global
+import React, { useState, useEffect, useRef } from "react";
+import { supabase } from "../../../lib/supabase";
+import { useToast } from "../../../context/ToastContext";
+import { useAuth } from "../../../context/AuthContext";
 
-export default function TransaksiPage() {
-  const [invoices, setInvoices] = useState<any[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-
-  // --- STATE UI/UX ---
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const { showToast } = useToast(); // Menginisialisasi Toast Global
-
-  // Form State
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [qty, setQty] = useState("1");
-  const [customerName, setCustomerName] = useState("");
-  const [customerWa, setCustomerWa] = useState("");
-  const [shippingAddress, setShippingAddress] = useState("");
-  const [shippingCost, setShippingCost] = useState("0");
-  const [status, setStatus] = useState("LUNAS");
-
-  const fetchData = async () => {
-    // Menarik data produk
-    const { data: prodData } = await supabase.from("products").select("*").is("deleted_at", null).gt("stock_quantity", 0);
-    if (prodData) setProducts(prodData);
-
-    // Menarik data invoice untuk UI DASBOR (Dibatasi 100 terbaru agar performa browser tetap ringan)
-    const { data: invData } = await supabase.from("invoices")
-      .select("*, invoice_items(*)")
-      .order("created_at", { ascending: false })
-      .limit(100); 
-    if (invData) setInvoices(invData);
-  };
+export default function AdminKliringPage() {
+  const { showToast } = useToast();
+  
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [selectedTx, setSelectedTx] = useState<any | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const { user } = useAuth();
+  
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [isRejectMode, setIsRejectMode] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetchData();
+    fetchTransactions();
+    
+    const channel = supabase
+      .channel("kliring_channel")
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, () => {
+        fetchTransactions();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const selectedProduct = products.find(p => p.id === parseInt(selectedProductId));
-  const estimatedTotal = selectedProduct ? (selectedProduct.base_price * parseInt(qty || "0")) + parseFloat(shippingCost || "0") : 0;
+  const fetchTransactions = async () => {
+    setIsLoading(true);
+    const { data, error } = await supabase.rpc('get_admin_invoices');
 
-  const resetForm = () => {
-    setSelectedProductId(""); setQty("1"); setCustomerName(""); setCustomerWa(""); setShippingAddress(""); setShippingCost("0"); setStatus("LUNAS");
-    setIsDrawerOpen(false);
-  };
-
-  const handleManualTransaction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      if (!selectedProduct) throw new Error("Produk tidak ditemukan atau stok habis.");
-      
-      const { data: userData } = await supabase.auth.getUser();
-      const adminEmail = userData.user?.email || "Unknown Admin";
-
-      const invoiceNumber = `INV-M-${Date.now().toString().slice(-6)}`;
-      const generatedEmail = `${customerWa.replace(/\D/g, '')}@manual.nexusgold.com`;
-
-      const { data: invData, error: invError } = await supabase
-        .from("invoices")
-        .insert([{
-          invoice_number: invoiceNumber, customer_name: customerName, customer_phone: customerWa,
-          customer_email: generatedEmail, shipping_address: shippingAddress || "Transaksi Offline / Ambil di Tempat",
-          total_amount: estimatedTotal, status: status,
-        }]).select().single();
-
-      if (invError) throw invError;
-
-      const { error: itemError } = await supabase.from("invoice_items").insert([{
-          invoice_id: invData.id, product_id: selectedProduct.id, product_name: selectedProduct.name,
-          quantity: parseInt(qty), price: selectedProduct.base_price
-        }]);
-
-      if (itemError) throw itemError;
-
-      const newStock = selectedProduct.stock_quantity - parseInt(qty);
-      await supabase.from("products").update({ stock_quantity: newStock }).eq("id", selectedProduct.id);
-
-      await logAdminAction(adminEmail, "TRANSACTION", `Menginput transaksi manual (${invoiceNumber}) untuk ${customerName}. Total: Rp ${estimatedTotal}`, "invoices", invData.id);
-
-      showToast("Transaksi manual berhasil dicatat!", "success");
-      resetForm();
-      fetchData();
-    } catch (err: any) {
-      showToast("Gagal: " + err.message, "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleMarkAsPaid = async (invoiceId: string) => {
-    if (!window.confirm("Tandai transaksi ini sebagai LUNAS?")) return;
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      await supabase.from("invoices").update({ status: "LUNAS" }).eq("id", invoiceId);
-      await logAdminAction(userData.user?.email || "Unknown", "TRANSACTION", `Mengotorisasi pelunasan untuk invoice ID: ${invoiceId}`, "invoices", invoiceId);
-      showToast("Status berhasil diperbarui.", "success");
-      fetchData(); 
-    } catch (err) { showToast("Gagal mengupdate status.", "error"); }
-  };
-
-  const handleCancelTransaction = async (invoiceId: string) => {
-    if (!window.confirm("Batalkan transaksi ini? (Stok tidak akan dikembalikan otomatis di versi ini)")) return;
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      await supabase.from("invoices").update({ status: "BATAL" }).eq("id", invoiceId);
-      await logAdminAction(userData.user?.email || "Unknown", "TRANSACTION", `Membatalkan invoice secara manual ID: ${invoiceId}`, "invoices", invoiceId);
-      showToast("Transaksi dibatalkan.", "success");
-      fetchData();
-    } catch (err) { showToast("Gagal membatalkan transaksi.", "error"); }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status?.toUpperCase()) {
-      case "MENUNGGU PEMBAYARAN": return "bg-[#221F18] text-yellow-400 border-yellow-900/50";
-      case "LUNAS": return "bg-[#1C221E] text-green-400 border-green-900/50";
-      case "DIKIRIM": return "bg-purple-900/30 text-purple-400 border-purple-700/50";
-      case "SELESAI": return "bg-green-900/30 text-green-400 border-green-700/50";
-      case "BATAL": return "bg-red-900/30 text-red-400 border-red-700/50";
-      default: return "bg-zinc-800/50 text-zinc-400 border-zinc-600";
-    }
-  };
-
-  const filteredInvoices = invoices.filter(inv => 
-    inv.customer_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    inv.invoice_number?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const columns: TableColumn<any>[] = [
-    {
-      header: "Tanggal & No",
-      render: (inv) => (
-        <div>
-          <p className="text-zinc-300">{new Date(inv.created_at).toLocaleDateString('id-ID')}</p>
-          <p className="font-mono text-zinc-500 mt-1">{inv.invoice_number}</p>
-        </div>
-      )
-    },
-    {
-      header: "Pembeli & Produk",
-      render: (inv) => (
-        <div>
-          <p className="font-bold text-[#C5A059]">{inv.customer_name || "NN"}</p>
-          <p className="text-xs text-zinc-500 mt-0.5 truncate max-w-[200px]">
-            {inv.invoice_items?.map((i:any) => `${i.quantity}x ${i.product_name}`).join(", ")}
-          </p>
-        </div>
-      )
-    },
-    {
-      header: "Total (Rp)",
-      align: "right",
-      render: (inv) => <span className="font-bold text-green-400">{new Intl.NumberFormat("id-ID").format(inv.total_amount)}</span>
-    },
-    {
-      header: "Status",
-      align: "center",
-      render: (inv) => <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider border ${getStatusColor(inv.status)}`}>{inv.status}</span>
-    },
-    {
-      header: "Aksi",
-      align: "right",
-      render: (inv) => (
-        <div className="flex justify-end items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-          {inv.status === "MENUNGGU PEMBAYARAN" && (
-            <button onClick={() => handleMarkAsPaid(inv.id)} className="text-[10px] font-bold uppercase tracking-widest text-green-500 hover:text-green-400">Lunas</button>
-          )}
-          {inv.status !== "BATAL" && inv.status !== "SELESAI" && (
-            <>
-              {inv.status === "MENUNGGU PEMBAYARAN" && <span className="text-zinc-700">|</span>}
-              <button onClick={() => handleCancelTransaction(inv.id)} className="text-[10px] font-bold uppercase tracking-widest text-red-500 hover:text-red-400">Batal</button>
-            </>
-          )}
-        </div>
-      )
-    }
-  ];
-
-  // --- FUNGSI EKSPOR ENTERPRISE GRADE ---
-  const exportToExcel = async () => {
-    setExporting(true);
-
-    try {
-      // 1. Tarik SELURUH data transaksi tanpa memedulikan batas paginasi UI
-      const { data: allData, error } = await supabase
-        .from("invoices")
-        .select("*, invoice_items(*)")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      if (!allData || allData.length === 0) {
-        showToast("Tidak ada data transaksi mutlak untuk diekspor.", "error");
-        setExporting(false);
-        return;
+    if (error) {
+      showToast("Gagal menarik data buku besar.", "error");
+    } else if (data) {
+      setTransactions(data);
+      if (selectedTx) {
+        const updated = data.find((tx: any) => tx.id === selectedTx.id);
+        if (updated) setSelectedTx(updated);
       }
+    }
+    setIsLoading(false);
+  };
 
-      // 2. Susun dokumen ExcelJS
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet("Laporan Penjualan");
+// --- FITUR 1: EXPORT KE EXCEL (CSV) ---
+  const handleExportExcel = () => {
+    if (transactions.length === 0) {
+      showToast("Tidak ada data untuk diunduh.", "error");
+      return;
+    }
 
-      worksheet.columns = [
-        { header: "TANGGAL TRF", key: "tanggal", width: 15 },
-        { header: "NO INVOICE", key: "invoice", width: 20 },
-        { header: "NAMA PELANGGAN", key: "nama", width: 25 },
-        { header: "NO WHATSAPP", key: "wa", width: 18 },
-        { header: "PRODUK EMAS", key: "produk", width: 40 },
-        { header: "TOTAL TAGIHAN", key: "total", width: 20 },
-        { header: "STATUS", key: "status", width: 15 },
-      ];
-
-      const headerRow = worksheet.getRow(1);
-      headerRow.font = { name: "Arial", size: 11, bold: true, color: { argb: "FFFFFF" } };
-      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "1F2937" } };
-      headerRow.alignment = { vertical: "middle", horizontal: "center" };
-      headerRow.height = 25;
-
-      allData.forEach((inv) => {
-        const productNames = inv.invoice_items?.map((i: any) => `${i.quantity}x ${i.product_name}`).join(", ") || "-";
-
-        const row = worksheet.addRow({
-          tanggal: new Date(inv.created_at).toLocaleDateString("id-ID"),
-          invoice: inv.invoice_number || "-",
-          nama: inv.customer_name?.toUpperCase() || "NN",
-          wa: inv.customer_phone || "-",
-          produk: productNames,
-          total: parseFloat(inv.total_amount),
-          status: inv.status,
-        });
-
-        row.getCell("total").numFmt = '"Rp"#,##0.00';
-        row.getCell("tanggal").alignment = { horizontal: "center" };
-        row.getCell("wa").alignment = { horizontal: "center" };
-        row.getCell("status").alignment = { horizontal: "center" };
-      });
-
-      // 3. Picu Unduhan Virtual
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `LAPORAN_REKAP_EMAS_${new Date().toISOString().slice(0, 10)}.xlsx`;
-      anchor.click();
-      window.URL.revokeObjectURL(url);
+    // Mengubah ID Transaksi menjadi Invoice Pembayaran & Menambahkan kolom URL Bukti Transfer
+    const headers = [
+      "Invoice Pembayaran", 
+      "Tanggal", 
+      "Klien", 
+      "Email", 
+      "Total Tagihan (Rp)", 
+      "Status", 
+      "URL Bukti Transfer", 
+      "Catatan Internal"
+    ];
+    
+    const csvRows = transactions.map(tx => {
+      // Format ID UUID menjadi format INV yang mudah dibaca
+      const invoiceNumber = `INV-${tx.id.split('-')[0].toUpperCase()}`;
       
-      // 4. Catat Tindakan Ekspor ke Audit Trail
-      const { data: userData } = await supabase.auth.getUser();
-      await logAdminAction(
-        userData.user?.email || "Unknown", 
-        "SYSTEM", 
-        `Mengekspor laporan finansial mutlak (${allData.length} baris) ke format Excel`, 
-        "invoices", 
-        null
-      );
+      return [
+        `"${invoiceNumber}"`,
+        `"${new Date(tx.created_at).toLocaleString('id-ID')}"`,
+        `"${tx.client_name}"`,
+        `"${tx.client_email}"`,
+        tx.total_amount,
+        `"${tx.status}"`,
+        `"${tx.payment_proof_url ? tx.payment_proof_url : 'Belum Terlampir'}"`, // Menyisipkan link gambar
+        `"${tx.admin_notes || '-'}"`
+      ].join(",");
+    });
 
-      showToast("Laporan Excel berhasil diunduh.", "success");
+    const csvContent = [headers.join(","), ...csvRows].join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Buku_Besar_Nexus_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
-    } catch (err: any) {
-      showToast("Gagal mengekspor berkas: " + err.message, "error");
+// --- FITUR 2: ADMIN UPLOAD MANUAL VIA WHATSAPP ---
+  const handleManualUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedTx) return;
+
+    setIsUploading(true);
+    const fileExt = file.name.split('.').pop();
+    const fileName = `admin_upload_${selectedTx.id}_${Date.now()}.${fileExt}`;
+    const filePath = `manual_inserts/${fileName}`;
+
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from('payment_proofs')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage
+        .from('payment_proofs')
+        .getPublicUrl(filePath);
+
+      const { error: updateError } = await supabase
+        .from("invoices")
+        .update({ 
+          payment_proof_url: publicUrlData.publicUrl,
+          status: 'MENUNGGU_VALIDASI',
+          admin_notes: 'Dokumen diunggah manual oleh Admin (WhatsApp/Jalur Pribadi).'
+        })
+        .eq("id", selectedTx.id);
+
+      if (updateError) throw updateError;
+
+      // PENCATATAN KE LOG AUDIT SISTEM
+      // Sesuaikan nama tabel dan kolom dengan struktur tabel audit database Anda
+      await supabase.from("audit_logs").insert([{
+        action: "MANUAL_PAYMENT_UPLOAD",
+        details: `Unggah bukti transfer manual untuk Invoice INV-${selectedTx.id.split('-')[0].toUpperCase()}`,
+        // admin_email: user?.email // Hapus komentar ini jika Anda menarik auth state 'user' di halaman ini
+      }]);
+
+      showToast("Bukti transfer manual berhasil diunggah.", "success");
+      fetchTransactions();
+    } catch (error: any) {
+      showToast(error.message || "Gagal mengunggah dokumen.", "error");
     } finally {
-      setExporting(false);
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
+
+const handleApprove = async () => {
+    if (!selectedTx) return;
+    setIsProcessing(true);
+
+    const { error } = await supabase
+      .from("invoices")
+      .update({ 
+        status: 'DIPROSES', 
+        admin_notes: 'Dana tervalidasi. Siap dilanjutkan ke logistik pengiriman.' 
+      })
+      .eq("id", selectedTx.id);
+
+    if (error) {
+      showToast("Gagal memvalidasi dokumen.", "error");
+    } else {
+      // PENCATATAN KE LOG AUDIT SISTEM
+      await supabase.from("audit_logs").insert([{
+        action: "VALIDASI_PEMBAYARAN",
+        details: `Otorisasi dana masuk untuk tagihan INV-${selectedTx.id.split('-')[0].toUpperCase()} senilai Rp ${selectedTx.total_amount}`,
+      }]);
+
+      showToast("Dana divalidasi. Aset siap dikirim.", "success");
+      setSelectedTx({ ...selectedTx, status: 'DIPROSES' });
+      fetchTransactions(); 
+    }
+    setIsProcessing(false);
+  };
+
+  const handleReject = async () => {
+    if (!selectedTx || !rejectionReason.trim()) return;
+    setIsProcessing(true);
+
+    const { error } = await supabase
+      .from("invoices")
+      .update({ 
+        status: 'MENUNGGU_PEMBAYARAN', 
+        payment_proof_url: null,
+        admin_notes: `DITOLAK: ${rejectionReason}`
+      })
+      .eq("id", selectedTx.id);
+
+    if (error) {
+      showToast("Gagal menolak dokumen.", "error");
+    } else {
+      // PENCATATAN KE LOG AUDIT SISTEM
+      await supabase.from("audit_logs").insert([{
+        action: "TOLAK_PEMBAYARAN",
+        details: `Penolakan bukti transfer INV-${selectedTx.id.split('-')[0].toUpperCase()}. Alasan: ${rejectionReason}`,
+      }]);
+
+      showToast("Dokumen ditolak.", "success");
+      setIsRejectMode(false); 
+      setRejectionReason(""); 
+      fetchTransactions(); 
+    }
+    setIsProcessing(false);
+  };
+
+  const pendingValidations = transactions.filter(tx => tx.status === 'MENUNGGU_VALIDASI');
+  const otherTransactions = transactions.filter(tx => tx.status !== 'MENUNGGU_VALIDASI');
 
   return (
-    <div className="max-w-7xl mx-auto relative overflow-x-hidden min-h-[80vh] flex flex-col gap-6">
+    <div className="max-w-7xl mx-auto h-[85vh] flex flex-col md:flex-row gap-6 font-sans">
       
-      {/* HEADER PAGE */}
-      <div className="flex justify-between items-end">
-        <div>
-          <h2 className="text-2xl font-bold text-zinc-100 tracking-tight">Manajemen Transaksi</h2>
-          <p className="text-xs text-zinc-500 mt-1">Laporan finansial dan kasir manual.</p>
-        </div>
-        <div className="flex gap-4">
-          <button onClick={exportToExcel} disabled={exporting} className="bg-transparent border border-zinc-700 text-zinc-300 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:bg-zinc-800 transition-colors shadow-sm flex items-center gap-2">
-            {exporting && <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
-            {exporting ? "Menyusun..." : "Unduh Rekap"}
-          </button>
-          <button onClick={() => setIsDrawerOpen(true)} className="bg-[#C5A059] text-[#0F110F] px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider hover:bg-[#B38F4B] transition-colors shadow-lg shadow-[#C5A059]/10">
-            + Catat Transaksi Manual
+      {/* PANEL KIRI: BUKU BESAR */}
+      <div className="w-full md:w-1/3 bg-[#121412] border border-[#2E3730] rounded-xl flex flex-col overflow-hidden shadow-lg shrink-0">
+        <div className="p-5 border-b border-[#2E3730] bg-[#161B18] shrink-0 flex justify-between items-center">
+          <h2 className="text-sm font-bold text-[#C5A059] uppercase tracking-widest">Pusat Kliring</h2>
+          <button 
+            onClick={handleExportExcel}
+            className="bg-[#1C221E] hover:bg-[#C5A059] hover:text-[#0F110F] text-zinc-400 border border-[#2E3730] px-3 py-1.5 rounded flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest transition-all shadow-sm"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+            Unduh CSV
           </button>
         </div>
-      </div>
 
-      {/* SEARCH BAR */}
-      <div className="bg-[#121412] p-4 rounded border border-[#2E3730] flex items-center">
-        <svg className="w-5 h-5 text-zinc-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-        <input 
-          type="text" 
-          placeholder="Cari berdasarkan Nama Klien atau No Invoice..." 
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="bg-transparent w-full text-sm text-zinc-100 focus:outline-none placeholder-zinc-600"
-        />
-      </div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {isLoading ? (
+            <p className="p-8 text-center text-xs text-zinc-500 animate-pulse uppercase tracking-widest">Sinkronisasi...</p>
+          ) : transactions.length === 0 ? (
+            <p className="p-8 text-center text-xs text-zinc-500 uppercase tracking-widest">Buku Besar Kosong</p>
+          ) : (
+            <div className="divide-y divide-[#2E3730]">
+              {pendingValidations.map((tx) => (
+                <button
+                  key={tx.id}
+                  onClick={() => { setSelectedTx(tx); setIsRejectMode(false); }}
+                  className={`w-full text-left p-4 transition-all hover:bg-[#1C221E] group relative ${selectedTx?.id === tx.id ? "bg-[#1C221E] border-l-4 border-yellow-500" : "border-l-4 border-transparent"}`}
+                >
+                  <div className="absolute top-0 right-0 w-2 h-2 bg-yellow-500 rounded-bl-lg shadow-[0_0_10px_rgba(234,179,8,0.5)]"></div>
+                  <div className="flex justify-between items-start mb-1">
+                    <p className="text-xs font-bold text-zinc-200 truncate pr-2">{tx.client_name}</p>
+                    <span className="text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded bg-yellow-900/30 text-yellow-500 border border-yellow-900/50">CEK MUTASI</span>
+                  </div>
+                  <p className="text-sm font-black font-mono text-[#C5A059] mb-1">Rp {new Intl.NumberFormat('id-ID').format(tx.total_amount)}</p>
+                </button>
+              ))}
 
-      {/* TABEL FULL WIDTH */}
-      <div className="flex-1">
-        <PaginatedTable data={filteredInvoices} columns={columns} itemsPerPage={10} emptyMessage="Tidak ada riwayat transaksi yang cocok." />
-      </div>
+              {otherTransactions.length > 0 && (
+                <div className="px-4 py-2 bg-[#0F110F] text-[9px] uppercase tracking-widest text-zinc-600 font-bold border-y border-[#2E3730]">Riwayat Diproses</div>
+              )}
+              {otherTransactions.map((tx) => {
+                let statusColor = "text-zinc-500";
+                if (tx.status === 'DIPROSES' || tx.status === 'DIKIRIM' || tx.status === 'SELESAI') statusColor = "text-green-500";
+                if (tx.status === 'DITOLAK' || tx.status === 'DIBATALKAN') statusColor = "text-red-500";
 
-      {/* --- LACI KASIR (OFF-CANVAS DRAWER) --- */}
-      <div className={`fixed inset-0 z-[100] transition-opacity duration-300 ${isDrawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={resetForm}></div>
-        <div className={`absolute top-0 right-0 w-full md:w-[450px] h-full bg-[#121412] border-l border-[#2E3730] shadow-2xl transform transition-transform duration-500 ease-out flex flex-col ${isDrawerOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-          
-          <div className="px-6 py-6 border-b border-[#2E3730] flex justify-between items-center bg-[#161B18]">
-            <div>
-              <h3 className="text-lg font-bold text-[#C5A059]">Input Transaksi Manual</h3>
-              <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Sistem Kasir Offline Luring</p>
+                return (
+                  <button
+                    key={tx.id}
+                    onClick={() => { setSelectedTx(tx); setIsRejectMode(false); }}
+                    className={`w-full text-left p-4 transition-all hover:bg-[#1C221E] group ${selectedTx?.id === tx.id ? "bg-[#1C221E] border-l-4 border-[#C5A059]" : "border-l-4 border-transparent"}`}
+                  >
+                    <div className="flex justify-between items-start mb-1">
+                      <p className="text-xs font-bold text-zinc-400 truncate pr-2">{tx.client_name}</p>
+                      <span className={`text-[8px] font-bold uppercase tracking-widest ${statusColor}`}>{tx.status}</span>
+                    </div>
+                    <p className="text-xs font-black font-mono text-zinc-300">Rp {new Intl.NumberFormat('id-ID').format(tx.total_amount)}</p>
+                  </button>
+                )
+              })}
             </div>
-            <button onClick={resetForm} className="text-zinc-500 hover:text-white text-xl">✕</button>
-          </div>
-
-          <div className="p-6 overflow-y-auto flex-1 custom-scrollbar">
-            <form id="pos-form" onSubmit={handleManualTransaction} className="space-y-5">
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Pilih Produk</label>
-                <select required value={selectedProductId} onChange={(e) => setSelectedProductId(e.target.value)} className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-100 rounded p-3 text-sm focus:border-[#C5A059] focus:outline-none">
-                  <option value="" disabled>-- Produk Tersedia --</option>
-                  {products.map((p) => (<option key={p.id} value={p.id}>{p.name} (Stok: {p.stock_quantity})</option>))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Kuantitas</label>
-                  <input type="number" required min="1" value={qty} onChange={(e) => setQty(e.target.value)} className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-100 rounded p-3 text-sm focus:border-[#C5A059] focus:outline-none" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Status Pembayaran</label>
-                  <select required value={status} onChange={(e) => setStatus(e.target.value)} className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-100 rounded p-3 text-sm focus:border-[#C5A059] focus:outline-none">
-                    <option value="LUNAS">Selesai (Lunas)</option>
-                    <option value="MENUNGGU PEMBAYARAN">Belum Bayar</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Nama Pembeli</label>
-                <input type="text" required value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-100 rounded p-3 text-sm focus:border-[#C5A059] focus:outline-none" />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">No WhatsApp</label>
-                <input type="text" required value={customerWa} onChange={(e) => setCustomerWa(e.target.value)} placeholder="0812..." className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-100 rounded p-3 text-sm focus:border-[#C5A059] focus:outline-none" />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Alamat Pengiriman / Catatan</label>
-                <textarea rows={2} value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} placeholder="Alamat lengkap atau tulis 'Ambil di toko'..." className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-100 rounded p-3 text-sm focus:border-[#C5A059] focus:outline-none resize-none" />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Ongkos Kirim (Rp)</label>
-                <input type="number" required value={shippingCost} onChange={(e) => setShippingCost(e.target.value)} className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-100 rounded p-3 text-sm focus:border-[#C5A059] focus:outline-none" />
-              </div>
-            </form>
-          </div>
-
-          <div className="p-6 border-t border-[#2E3730] bg-[#161B18]">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Estimasi Tagihan</span>
-              <p className="text-xl font-black text-[#C5A059]">Rp {new Intl.NumberFormat("id-ID").format(estimatedTotal)}</p>
-            </div>
-            <button type="submit" form="pos-form" disabled={loading} className="w-full bg-[#C5A059] text-[#0F110F] font-bold text-xs uppercase tracking-widest rounded py-4 hover:bg-[#B38F4B] disabled:opacity-50 transition-colors">
-              {loading ? "Memproses..." : "Catat Transaksi"}
-            </button>
-          </div>
+          )}
         </div>
       </div>
+
+      {/* PANEL KANAN: INSPEKSI & UPLOAD */}
+      <div className="w-full md:w-2/3 flex flex-col gap-6">
+        {!selectedTx ? (
+          <div className="flex-1 bg-[#121412] border border-[#2E3730] rounded-xl flex items-center justify-center">
+            <div className="text-center opacity-50">
+              <svg className="w-16 h-16 mx-auto mb-4 text-[#C5A059]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              <p className="text-xs text-[#C5A059] uppercase tracking-widest font-bold">Pilih Dokumen Untuk Inspeksi</p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 bg-[#121412] border border-[#2E3730] rounded-xl flex flex-col overflow-hidden shadow-lg">
+            
+            <div className="p-6 border-b border-[#2E3730] bg-[#161B18] shrink-0 flex justify-between items-center gap-4">
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <h3 className="text-lg font-bold text-zinc-100">INV-{selectedTx.id.split('-')[0].toUpperCase()}</h3>
+                  <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border ${selectedTx.status === 'MENUNGGU_VALIDASI' ? 'bg-yellow-900/20 text-yellow-500 border-yellow-900/50' : selectedTx.status === 'DIPROSES' ? 'bg-green-900/20 text-green-500 border-green-900/50' : 'bg-zinc-900 text-zinc-400 border-zinc-700'}`}>
+                    {selectedTx.status}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400">Klien: <span className="text-zinc-200 font-bold">{selectedTx.client_name}</span></p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1">Total Ekstraksi</p>
+                <p className="text-2xl font-black font-mono text-[#C5A059]">Rp {new Intl.NumberFormat('id-ID').format(selectedTx.total_amount)}</p>
+              </div>
+            </div>
+
+            <div className="flex-1 p-6 bg-[#0F110F] overflow-y-auto flex flex-col items-center justify-center relative">
+              {selectedTx.payment_proof_url ? (
+                <div className="w-full max-w-sm relative group">
+                  <img src={selectedTx.payment_proof_url} alt="Bukti Transfer" className="w-full rounded-lg border border-[#2E3730] shadow-2xl object-contain bg-[#161B18] max-h-[400px]" />
+                  {selectedTx.admin_notes && (
+                     <div className="mt-4 p-3 bg-[#1C221E] border border-[#2E3730] rounded text-[10px] text-zinc-400 font-mono">
+                       <span className="font-bold text-[#C5A059]">Log:</span> {selectedTx.admin_notes}
+                     </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center p-10 border border-dashed border-[#2E3730] rounded-xl bg-[#161B18] w-full max-w-md">
+                  <svg className="w-10 h-10 mx-auto mb-3 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                  <p className="text-xs text-zinc-500 uppercase tracking-widest mb-6">Belum Ada Dokumen Mutasi Terlampir</p>
+                  
+                  {/* TOMBOL UPLOAD MANUAL ADMIN */}
+                  <input 
+                    type="file" 
+                    accept="image/jpeg, image/png, image/webp" 
+                    className="hidden" 
+                    ref={fileInputRef}
+                    onChange={handleManualUpload}
+                  />
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                    className="bg-[#1C221E] border border-[#C5A059]/50 text-[#C5A059] px-6 py-3 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-[#C5A059] hover:text-[#0F110F] transition-all disabled:opacity-50 mx-auto flex items-center gap-2"
+                  >
+                    {isUploading ? "MENGUNGGAH..." : "+ Lampirkan Struk WhatsApp"}
+                  </button>
+                  <p className="text-[9px] text-zinc-600 mt-3 font-bold">*Fitur ini digunakan jika klien mentransfer langsung via jalur pribadi.</p>
+                </div>
+              )}
+            </div>
+
+            {selectedTx.status === 'MENUNGGU_VALIDASI' && (
+              <div className="p-6 border-t border-[#2E3730] bg-[#161B18] shrink-0">
+                {!isRejectMode ? (
+                  <div className="flex gap-4">
+                    <button onClick={() => setIsRejectMode(true)} className="flex-1 bg-red-900/10 text-red-500 border border-red-900/30 px-6 py-4 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all">
+                      Tolak Dokumen
+                    </button>
+                    <button onClick={handleApprove} disabled={isProcessing} className="flex-1 bg-gradient-to-r from-green-600 to-green-500 text-white px-6 py-4 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:shadow-[0_0_20px_rgba(34,197,94,0.3)] disabled:opacity-50 transition-all flex justify-center gap-2">
+                      {isProcessing ? "MENGOTORISASI..." : "OTORISASI & VALIDASI DANA MASUK"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="animate-fade-in space-y-4">
+                    <input type="text" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} placeholder="Alasan penolakan..." className="w-full bg-[#0F110F] border border-red-900/50 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-red-500 transition-colors" autoFocus />
+                    <div className="flex gap-4">
+                      <button onClick={() => setIsRejectMode(false)} className="flex-1 bg-[#1C221E] text-zinc-400 border border-[#2E3730] px-6 py-3 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:text-white transition-all">Batal</button>
+                      <button onClick={handleReject} disabled={!rejectionReason.trim() || isProcessing} className="flex-1 bg-red-600 text-white px-6 py-3 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-red-700 disabled:opacity-50 transition-all">KONFIRMASI PENOLAKAN</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }

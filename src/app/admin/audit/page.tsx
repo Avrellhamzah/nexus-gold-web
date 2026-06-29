@@ -5,7 +5,8 @@ import { supabase } from "../../../lib/supabase";
 import PaginatedTable, { TableColumn } from "../../../components/PaginatedTable";
 
 export default function AuditTrailPage() {
-  const [logs, setLogs] = useState<any[]>([]);
+  const [allLogs, setAllLogs] = useState<any[]>([]);
+  const [filteredLogs, setFilteredLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState("ALL");
 
@@ -25,25 +26,51 @@ export default function AuditTrailPage() {
 
   const fetchLogs = async () => {
     setLoading(true);
-    // Batasi 500 log terbaru agar browser tidak berat, bisa disesuaikan kebutuhan
-    let query = supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(500);
+    // Kita tarik semua data tanpa filter .eq() di Supabase untuk menghindari error jika kolom tidak ada
+    const { data, error } = await supabase
+      .from("audit_logs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(500);
     
-    if (filterType !== "ALL") {
-      query = query.eq("action_type", filterType);
-    }
-
-    const { data, error } = await query;
     if (error) {
       showToast("Gagal menarik data dari brankas enkripsi.", "error");
     } else if (data) {
-      setLogs(data);
+      setAllLogs(data);
     }
     setLoading(false);
   };
 
   useEffect(() => {
     fetchLogs();
-  }, [filterType]);
+  }, []);
+
+  // --- FUNGSI KECERDASAN NORMALISASI KATEGORI ---
+  // Menyatukan variasi data dari berbagai modul ke dalam 4 pilar filter utama
+  const getNormalizedCategory = (log: any) => {
+    const rawAction = (log.action_type || log.action || "SYSTEM").toUpperCase();
+    
+    // Kelompokkan semua aksi finansial dan kliring ke TRANSACTION
+    if (rawAction.includes("PEMBAYARAN") || rawAction.includes("KLIRING") || rawAction === "TRANSACTION") {
+      return "TRANSACTION";
+    }
+    // Kelompokkan pengiriman, kurir, dan pemotongan stok ke INVENTORY
+    if (rawAction.includes("LOGISTIK") || rawAction.includes("SELESAI") || rawAction === "INVENTORY") {
+      return "INVENTORY";
+    }
+    if (rawAction === "PRICING") return "PRICING";
+    
+    return "SYSTEM"; // Fallback untuk aktivitas admin/auth lainnya
+  };
+
+  // --- EKSEKUSI FILTER DI SISI FRONTEND ---
+  useEffect(() => {
+    if (filterType === "ALL") {
+      setFilteredLogs(allLogs);
+    } else {
+      setFilteredLogs(allLogs.filter(log => getNormalizedCategory(log) === filterType));
+    }
+  }, [filterType, allLogs]);
 
   const getActionColor = (type: string) => {
     switch (type) {
@@ -69,26 +96,41 @@ export default function AuditTrailPage() {
     {
       header: "Otoritas (Admin)",
       render: (log) => (
-        <span className="text-xs font-bold text-zinc-300">{log.admin_email}</span>
+        // Membaca admin_email, jika kosong berarti dieksekusi oleh sistem logistik otomatis
+        <span className="text-xs font-bold text-zinc-300">
+          {log.admin_email || "Sistem / Administrator"}
+        </span>
       )
     },
     {
       header: "Kategori",
       align: "center",
       width: "w-32",
-      render: (log) => (
-        <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider border whitespace-nowrap ${getActionColor(log.action_type)}`}>
-          {log.action_type}
-        </span>
-      )
+      render: (log) => {
+        const category = getNormalizedCategory(log);
+        const rawAction = log.action_type || log.action || "SYSTEM";
+        return (
+          <div className="flex flex-col items-center gap-1">
+            <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider border whitespace-nowrap ${getActionColor(category)}`}>
+              {category}
+            </span>
+            {/* Menampilkan kode aksi asli dari database sebagai referensi forensik */}
+            <span className="text-[8px] text-zinc-500 uppercase tracking-widest">{rawAction}</span>
+          </div>
+        );
+      }
     },
     {
       header: "Deskripsi Forensik",
-      render: (log) => (
-        <span className="text-xs text-zinc-300 whitespace-normal block min-w-[300px] leading-relaxed">
-          {log.description}
-        </span>
-      )
+      render: (log) => {
+        // Adaptasi pembacaan kolom description (format lama) dan details (format baru)
+        const desc = log.description || log.details || "Detail tidak tersedia.";
+        return (
+          <span className="text-xs text-zinc-300 whitespace-normal block min-w-[300px] leading-relaxed">
+            {desc}
+          </span>
+        );
+      }
     }
   ];
 
@@ -125,9 +167,9 @@ export default function AuditTrailPage() {
           </div>
         ) : (
           <PaginatedTable 
-            data={logs} 
+            data={filteredLogs} 
             columns={columns} 
-            itemsPerPage={15} // Lebih banyak baris per halaman karena log biasanya ringkas
+            itemsPerPage={15} 
             emptyMessage="Tidak ada catatan aktivitas yang ditemukan untuk kategori ini." 
           />
         )}

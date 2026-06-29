@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase, logAdminAction } from "../../../lib/supabase";
+import { supabase } from "../../../lib/supabase"; // Menggunakan interaksi langsung ke tabel audit_logs
 import { createPortal } from "react-dom";
 import Link from "next/link";
 
@@ -16,10 +16,11 @@ export default function ManajemenPesananPage() {
   const fetchOrders = async () => {
     setLoading(true);
     try {
+      // Perbaikan filter: Menambahkan 'DIPROSES' ke dalam radar pemindaian logistik
       const { data, error } = await supabase
         .from("invoices")
         .select(`*, invoice_items (id, product_id, product_name, quantity, price)`)
-        .in("status", ["LUNAS", "DIKIRIM", "MENUNGGU TINJAUAN", "SELESAI"]) 
+        .in("status", ["LUNAS", "DIPROSES", "DIKIRIM", "MENUNGGU TINJAUAN", "SELESAI"]) 
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -40,29 +41,53 @@ export default function ManajemenPesananPage() {
     setIsProcessing(true);
 
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const adminEmail = userData.user?.email || "Unknown Admin";
-
+      // 1. Eksekusi Loop Pemotongan Stok Fisik (Fitur Asli Anda)
       for (const item of selectedOrder.invoice_items) {
         if (!item.product_id) continue;
-        const { data: productData, error: fetchError } = await supabase.from("products").select("stock_quantity").eq("id", item.product_id).single();
+        const { data: productData, error: fetchError } = await supabase
+          .from("products")
+          .select("stock_quantity")
+          .eq("id", item.product_id)
+          .single();
+          
         if (fetchError) throw fetchError;
 
         const newStock = Math.max(0, (productData?.stock_quantity || 0) - item.quantity);
-        const { error: updateError } = await supabase.from("products").update({ stock_quantity: newStock }).eq("id", item.product_id);
+        const { error: updateError } = await supabase
+          .from("products")
+          .update({ stock_quantity: newStock })
+          .eq("id", item.product_id);
+          
         if (updateError) throw updateError;
       }
 
-      const { error: invoiceError } = await supabase.from("invoices").update({ status: "DIKIRIM" }).eq("id", selectedOrder.id);
+      // 2. Perbarui Status Tagihan & Tanamkan Nomor Resi Kurir
+      const logistikNote = trackingNumber 
+        ? `Aset dikirim. Nomor Pelacakan Resi: ${trackingNumber.toUpperCase()}` 
+        : "Aset diserahkan ke pihak ekspedisi.";
+
+      const { error: invoiceError } = await supabase
+        .from("invoices")
+        .update({ 
+          status: "DIKIRIM",
+          admin_notes: logistikNote
+        })
+        .eq("id", selectedOrder.id);
+        
       if (invoiceError) throw invoiceError;
 
-      await logAdminAction(adminEmail, "INVENTORY", `Memproses logistik (potong stok) untuk pesanan ${selectedOrder.invoice_number}`, "invoices", selectedOrder.id);
+      // 3. SUNTIK DATA KE LOG AUDIT SISTEM (Memicu PING Realtime ke Semua Admin)
+      const labelInvoice = selectedOrder.invoice_number || `INV-${selectedOrder.id.split('-')[0].toUpperCase()}`;
+      await supabase.from("audit_logs").insert([{
+        action: "DISPATCH_LOGISTIK",
+        details: `Memproses logistik & potong stok untuk pesanan ${labelInvoice}. Resi: ${trackingNumber.toUpperCase() || 'Tanpa Resi'}`,
+      }]);
 
-      setOrders(orders.map(o => o.id === selectedOrder.id ? { ...o, status: "DIKIRIM" } : o));
+      setOrders(orders.map(o => o.id === selectedOrder.id ? { ...o, status: "DIKIRIM", admin_notes: logistikNote } : o));
       setSelectedOrder(null);
       setTrackingNumber("");
       
-      alert("Pesanan berhasil diproses dan stok telah dipotong secara otomatis.");
+      alert("Pesanan berhasil diberangkatkan dan stok brankas terpotong otomatis.");
     } catch (err) {
       console.error("Gagal memproses pesanan:", err);
       alert("Terjadi kesalahan sistem saat memproses logistik.");
@@ -72,13 +97,23 @@ export default function ManajemenPesananPage() {
   };
 
   const updateStatusToSelesai = async (invoiceId: string, invoiceNumber: string) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const adminEmail = userData.user?.email || "Unknown Admin";
-
-    const { error } = await supabase.from('invoices').update({ status: 'SELESAI' }).eq('id', invoiceId);
+    const labelInvoice = invoiceNumber || `INV-${invoiceId.split('-')[0].toUpperCase()}`;
+    
+    const { error } = await supabase
+      .from('invoices')
+      .update({ 
+        status: 'SELESAI',
+        admin_notes: 'Pesanan selesai. Klien mengonfirmasi serah terima fisik aset.'
+      })
+      .eq('id', invoiceId);
       
     if (!error) {
-      await logAdminAction(adminEmail, "TRANSACTION", `Menyelesaikan pesanan secara manual (Tinjauan/Offline) untuk ref ${invoiceNumber}`, "invoices", invoiceId);
+      // SUNTIK DATA KE LOG AUDIT SISTEM (Aksi Penyelesaian Transaksi)
+      await supabase.from("audit_logs").insert([{
+        action: "SELESAI_MANUAL",
+        details: `Menyelesaikan serah terima pesanan secara manual/offline untuk ref ${labelInvoice}`,
+      }]);
+
       fetchOrders(); 
     } else {
       alert("Gagal memperbarui status.");
@@ -103,17 +138,25 @@ export default function ManajemenPesananPage() {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* KOLOM 1: ANTREN PACKING (Menampung LUNAS & DIPROSES) */}
         <div className="bg-[#121412] border border-[#2E3730] rounded-lg flex flex-col h-[75vh]">
           <div className="p-4 border-b border-[#2E3730] bg-[#161B18] flex justify-between items-center">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-[#C5A059]">Antrean Packing (Lunas)</h2>
-            <span className="bg-[#C5A059] text-black text-[10px] font-bold px-2 py-0.5 rounded-full">{orders.filter(o => o.status === "LUNAS").length}</span>
+            <h2 className="text-xs font-bold uppercase tracking-widest text-[#C5A059]">Antrean Packing</h2>
+            <span className="bg-[#C5A059] text-black text-[10px] font-bold px-2 py-0.5 rounded-full">
+              {orders.filter(o => o.status === "LUNAS" || o.status === "DIPROSES").length}
+            </span>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-            {orders.filter(o => o.status === "LUNAS").map(order => (
-              <div key={order.id} className="bg-[#161B18] border border-[#2E3730] p-4 rounded hover:border-[#C5A059]/50 transition-colors cursor-pointer" onClick={() => setSelectedOrder(order)}>
+            {orders.filter(o => o.status === "LUNAS" || o.status === "DIPROSES").map(order => (
+              <div 
+                key={order.id} 
+                className="bg-[#161B18] border border-[#2E3730] p-4 rounded hover:border-[#C5A059]/50 transition-colors cursor-pointer" 
+                onClick={() => setSelectedOrder(order)}
+              >
                 <div className="flex justify-between items-start mb-3">
                   <div>
-                    <p className="text-xs font-mono text-zinc-400">{order.invoice_number}</p>
+                    <p className="text-xs font-mono text-zinc-400">{order.invoice_number || `INV-${order.id.split('-')[0].toUpperCase()}`}</p>
                     <p className="text-sm font-bold mt-1">{order.invoice_items?.length || 0} Macam Aset</p>
                   </div>
                   <span className="bg-blue-900/30 text-blue-400 border border-blue-700/50 text-[9px] font-bold uppercase px-2 py-1 rounded">SIAP KIRIM</span>
@@ -124,6 +167,7 @@ export default function ManajemenPesananPage() {
           </div>
         </div>
 
+        {/* KOLOM 2: LOGISTIK & TINJAUAN */}
         <div className="bg-[#121412] border border-[#2E3730] rounded-lg flex flex-col h-[75vh]">
           <div className="p-4 border-b border-[#2E3730] bg-[#161B18] flex justify-between items-center">
             <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-400">Logistik & Tinjauan</h2>
@@ -131,30 +175,35 @@ export default function ManajemenPesananPage() {
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
             {orders.filter(o => o.status === "DIKIRIM" || o.status === "MENUNGGU TINJAUAN").map(order => (
-              <div key={order.id} className="bg-[#161B18] border border-blue-900/50 p-4 rounded">
+              <div key={order.id} className="bg-[#161B18] border border-[#2E3730] p-4 rounded">
                 <div className="flex justify-between items-start mb-2">
-                  <p className="text-xs font-mono text-blue-400">{order.invoice_number}</p>
-                  {!order.user_id && <span className="text-[9px] bg-zinc-700 px-1 rounded text-white">Manual</span>}
+                  <p className="text-xs font-mono text-blue-400">{order.invoice_number || `INV-${order.id.split('-')[0].toUpperCase()}`}</p>
+                  {!order.user_id && <span className="text-[9px] bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[#C5A059] font-bold uppercase tracking-wider">WhatsApp</span>}
                 </div>
                 
-                <p className="text-[10px] text-zinc-400 leading-relaxed mb-3">
-                  {order.status === "MENUNGGU TINJAUAN" ? "Klien mengirim bukti unboxing." : "Dalam pengiriman."}
+                <p className="text-[10px] text-zinc-400 leading-relaxed mb-3 font-mono">
+                  {order.status === "MENUNGGU TINJAUAN" ? "Klien mengirim bukti unboxing." : (order.admin_notes || "Dalam perjalanan kurir.")}
                 </p>
 
                 <button 
                   onClick={() => {
                     if (order.status === "MENUNGGU TINJAUAN") {
-                      window.open(order.unboxing_proof_url, "_blank");
-                      if (window.confirm("Bukti unboxing valid? Selesaikan pesanan?")) {
+                      if (order.unboxing_proof_url) {
+                        window.open(order.unboxing_proof_url, "_blank");
+                      } else {
+                        alert("Klien belum melampirkan berkas video.");
+                        return;
+                      }
+                      if (window.confirm("Apakah berkas serah terima/unboxing valid? Selesaikan pesanan?")) {
                         updateStatusToSelesai(order.id, order.invoice_number);
                       }
                     } else {
                       if (!order.user_id) {
-                        if (window.confirm("Ini adalah pelanggan manual tanpa dasbor. Apakah paket sudah dipastikan diterima klien?")) {
+                        if (window.confirm("Ini adalah transaksi via WhatsApp (Pelanggan Manual). Apakah paket sudah dipastikan sampai ke tangan klien?")) {
                           updateStatusToSelesai(order.id, order.invoice_number);
                         }
                       } else {
-                        alert("Pesanan member harus menunggu konfirmasi unboxing dari klien.");
+                        alert("Pesanan premium member harus menunggu unggah konfirmasi digital/video dari pihak klien.");
                       }
                     }
                   }}
@@ -167,6 +216,7 @@ export default function ManajemenPesananPage() {
           </div>
         </div>
 
+        {/* KOLOM 3: SELESAI */}
         <div className="bg-[#121412] border border-[#2E3730] rounded-lg flex flex-col h-[75vh]">
           <div className="p-4 border-b border-[#2E3730] bg-[#161B18] flex justify-between items-center">
             <h2 className="text-xs font-bold uppercase tracking-widest text-green-500">Selesai</h2>
@@ -174,21 +224,22 @@ export default function ManajemenPesananPage() {
           <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
              {orders.filter(o => o.status === "SELESAI").map(order => (
               <div key={order.id} className="bg-[#0F110F] border border-green-900/30 p-4 rounded">
-                <p className="text-xs font-mono text-green-600">{order.invoice_number}</p>
-                <p className="text-sm font-bold mt-1 text-green-500/70">Telah Diterima</p>
+                <p className="text-xs font-mono text-green-600">{order.invoice_number || `INV-${order.id.split('-')[0].toUpperCase()}`}</p>
+                <p className="text-sm font-bold mt-1 text-green-500/70">Telah Diterima Klien</p>
               </div>
             ))}
           </div>
         </div>
       </div>
 
+      {/* MODAL MANIFEST PENGIRIMAN */}
       {selectedOrder && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setSelectedOrder(null)}></div>
-          <div className="relative bg-[#121412] border border-[#2E3730] w-full max-w-lg rounded-lg shadow-2xl flex flex-col">
+          <div className="relative bg-[#121412] border border-[#2E3730] w-full max-w-lg rounded-lg shadow-2xl flex flex-col animate-fade-in">
             <div className="px-6 py-4 border-b border-[#2E3730] bg-[#161B18]">
               <h3 className="font-[family-name:var(--font-playfair)] text-xl font-bold text-[#C5A059]">Manifest Pengiriman</h3>
-              <p className="text-xs text-zinc-500 font-mono mt-1">{selectedOrder.invoice_number}</p>
+              <p className="text-xs text-zinc-500 font-mono mt-1">{selectedOrder.invoice_number || `INV-${selectedOrder.id.split('-')[0].toUpperCase()}`}</p>
             </div>
 
             <div className="p-6 space-y-6">
@@ -210,8 +261,14 @@ export default function ManajemenPesananPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Nomor Resi / Dokumen Pengiriman (Opsional)</label>
-                <input type="text" value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} placeholder="Masukkan kode resi kurir..." className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-200 text-sm rounded px-3 py-3 focus:outline-none focus:border-[#C5A059]" />
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Nomor Resi / Dokumen Pengiriman</label>
+                <input 
+                  type="text" 
+                  value={trackingNumber} 
+                  onChange={(e) => setTrackingNumber(e.target.value)} 
+                  placeholder="Masukkan kode resi kurir..." 
+                  className="w-full bg-[#161B18] border border-[#2E3730] text-zinc-200 text-sm rounded px-3 py-3 focus:outline-none focus:border-[#C5A059] uppercase font-mono tracking-wider" 
+                />
               </div>
             </div>
 

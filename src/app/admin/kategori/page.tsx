@@ -51,7 +51,7 @@ export default function KategoriPage() {
       header: "Aksi",
       align: "right",
       render: (item) => (
-        <div className="flex items-center justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+        <div className="flex items-center justify-end gap-3 group-hover:opacity-100 transition-opacity duration-300">
           <button onClick={() => { setEditId(item.id); setName(item.category_name); setDescription(item.description || ""); setIsDrawerOpen(true); }} className="text-[#C5A059] hover:text-white text-[10px] font-bold uppercase tracking-widest transition-colors">Ubah</button>
           <span className="text-zinc-700">|</span>
           <button onClick={() => setDeleteModal({ isOpen: true, id: item.id })} className="text-red-500 hover:text-red-400 text-[10px] font-bold uppercase tracking-widest transition-colors">Arsip</button>
